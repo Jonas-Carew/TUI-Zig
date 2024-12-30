@@ -10,7 +10,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const exe = b.addExecutable(.{
-        .name = "libvaxis-starter",
+        .name = "my-vaxis-tui",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,

@@ -42,6 +42,12 @@ const MyApp = struct {
     /// A mouse event that we will handle in the draw cycle
     mouse: ?vaxis.Mouse,
 
+    /// A struct with all app variables
+    app: struct {
+        /// The color of blocks when highlighted
+        color: enum { r, g, b } = .r,
+    } = .{},
+
     pub fn init(allocator: std.mem.Allocator) !MyApp {
         return .{
             .allocator = allocator,
@@ -115,6 +121,12 @@ const MyApp = struct {
                 // There are other matching functions available for specific purposes, as well
                 if (key.matches('c', .{ .ctrl = true }))
                     self.should_quit = true;
+                if (key.matches('r', .{}))
+                    self.app.color = .r;
+                if (key.matches('g', .{}))
+                    self.app.color = .g;
+                if (key.matches('b', .{}))
+                    self.app.color = .b;
             },
             .mouse => |mouse| self.mouse = mouse,
             .winsize => |ws| try self.vx.resize(self.allocator, self.tty.anyWriter(), ws),
@@ -149,12 +161,19 @@ const MyApp = struct {
         // mouse events are much easier to handle in the draw cycle. Windows have a helper method to
         // determine if the event occurred in the target window. This method returns null if there
         // is no mouse event, or if it occurred outside of the window
-        const style: vaxis.Style = if (child.hasMouse(self.mouse)) |_| blk: {
-            // We handled the mouse event, so set it to null
+        var style: vaxis.Style = .{};
+        // change color of text
+        switch (self.app.color) {
+            .r => style.fg = .{ .rgb = [_]u8{ 255, 0, 0 } },
+            .g => style.fg = .{ .rgb = [_]u8{ 0, 255, 0 } },
+            .b => style.fg = .{ .rgb = [_]u8{ 0, 0, 255 } },
+        }
+        // reverse on hover
+        if (child.hasMouse(self.mouse)) |_| {
             self.mouse = null;
-            self.vx.setMouseShape(.pointer);
-            break :blk .{ .reverse = true };
-        } else .{};
+            self.vx.setMouseShape(.text);
+            style.reverse = true;
+        }
 
         // Print a text segment to the screen. This is a helper function which iterates over the
         // text field for graphemes. Alternatively, you can implement your own print functions and
