@@ -45,7 +45,13 @@ const MyApp = struct {
     /// A struct with all app variables
     app: struct {
         /// The color of blocks when highlighted
-        color: enum { r, g, b } = .r,
+        color: struct {
+            r: bool = true,
+            g: bool = true,
+            b: bool = true,
+        } = .{},
+        state: enum { hello, goodbye } = .hello,
+        reverse: bool = false,
     } = .{},
 
     pub fn init(allocator: std.mem.Allocator) !MyApp {
@@ -122,11 +128,13 @@ const MyApp = struct {
                 if (key.matches('c', .{ .ctrl = true }))
                     self.should_quit = true;
                 if (key.matches('r', .{}))
-                    self.app.color = .r;
+                    self.app.color.r = !self.app.color.r;
                 if (key.matches('g', .{}))
-                    self.app.color = .g;
+                    self.app.color.g = !self.app.color.g;
                 if (key.matches('b', .{}))
-                    self.app.color = .b;
+                    self.app.color.b = !self.app.color.b;
+                if (key.matches('q', .{}) and (self.app.state == .goodbye))
+                    self.should_quit = true;
             },
             .mouse => |mouse| self.mouse = mouse,
             .winsize => |ws| try self.vx.resize(self.allocator, self.tty.anyWriter(), ws),
@@ -136,7 +144,12 @@ const MyApp = struct {
 
     /// Draw our current state
     pub fn draw(self: *MyApp) void {
-        const msg = "Hello, world!";
+        var redraw: bool = false;
+
+        const msg = switch (self.app.state) {
+            .hello => "Hello, world!",
+            .goodbye => "Goodbye, world!",
+        };
 
         // Window is a bounded area with a view to the screen. You cannot draw outside of a windows
         // bounds. They are light structures, not intended to be stored.
@@ -152,33 +165,59 @@ const MyApp = struct {
         self.vx.setMouseShape(.default);
 
         const child = win.child(.{
-            .x_off = (win.width / 2) - 7,
+            .x_off = (win.width / 2) - (msg.len / 2),
             .y_off = win.height / 2 + 1,
             .width = .{ .limit = msg.len },
             .height = .{ .limit = 1 },
         });
 
+        var style: vaxis.Style = .{
+            .fg = .{ .rgb = [_]u8{ 0, 0, 0 } },
+            .reverse = self.app.reverse,
+        };
+        // change color of text
+        if (self.app.color.r) {
+            switch (style.fg) {
+                .rgb => |rgb| style.fg = .{ .rgb = [_]u8{ 255, rgb[1], rgb[2] } },
+                else => {},
+            }
+        }
+        if (self.app.color.g) {
+            switch (style.fg) {
+                .rgb => |rgb| style.fg = .{ .rgb = [_]u8{ rgb[0], 255, rgb[2] } },
+                else => {},
+            }
+        }
+        if (self.app.color.b) {
+            switch (style.fg) {
+                .rgb => |rgb| style.fg = .{ .rgb = [_]u8{ rgb[0], rgb[1], 255 } },
+                else => {},
+            }
+        }
+
         // mouse events are much easier to handle in the draw cycle. Windows have a helper method to
         // determine if the event occurred in the target window. This method returns null if there
         // is no mouse event, or if it occurred outside of the window
-        var style: vaxis.Style = .{};
-        // change color of text
-        switch (self.app.color) {
-            .r => style.fg = .{ .rgb = [_]u8{ 255, 0, 0 } },
-            .g => style.fg = .{ .rgb = [_]u8{ 0, 255, 0 } },
-            .b => style.fg = .{ .rgb = [_]u8{ 0, 0, 255 } },
-        }
-        // reverse on hover
-        if (child.hasMouse(self.mouse)) |_| {
-            self.mouse = null;
+        if (child.hasMouse(self.mouse)) |mouse| {
             self.vx.setMouseShape(.text);
-            style.reverse = true;
-        }
+            self.app.reverse = true;
+            if ((mouse.button == .left) and (mouse.type == .release)) {
+                switch (self.app.state) {
+                    .hello => self.app.state = .goodbye,
+                    .goodbye => self.app.state = .hello,
+                }
+            }
+            redraw = true;
+            self.mouse = null;
+        } else self.app.reverse = false;
 
         // Print a text segment to the screen. This is a helper function which iterates over the
         // text field for graphemes. Alternatively, you can implement your own print functions and
         // use the writeCell API.
         _ = try child.printSegment(.{ .text = msg, .style = style }, .{});
+
+        // if we need to redraw, call draw again
+        if (redraw) self.draw();
     }
 };
 
