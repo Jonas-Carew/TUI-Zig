@@ -1,3 +1,3 @@
-# libvaxis-starter
+# TUI Fun
 
-Starter project for a libvaxis project
+My fun with the Vaxis-Zig library
