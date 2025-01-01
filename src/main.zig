@@ -30,6 +30,12 @@ const Event = union(enum) {
     // is started
 };
 
+const Color = struct {
+    r: u8,
+    g: u8,
+    b: u8,
+};
+
 /// The application state
 const MyApp = struct {
     allocator: std.mem.Allocator,
@@ -44,14 +50,29 @@ const MyApp = struct {
 
     /// A struct with all app variables
     app: struct {
-        /// The color of blocks when highlighted
-        color: struct {
-            r: bool = true,
-            g: bool = true,
-            b: bool = true,
+        state: enum { child, tiles } = .child,
+
+        child: struct {
+            state: enum { hello, goodbye } = .hello,
+
+            color: struct {
+                r: bool = true,
+                g: bool = true,
+                b: bool = true,
+            } = .{},
+            hovered: bool = false,
+            clicked: bool = false,
         } = .{},
-        state: enum { hello, goodbye } = .hello,
-        reverse: bool = false,
+
+        tiles: struct {
+            state: enum { selection, tiles } = .selection,
+
+            height: ?usize = null,
+            width: ?usize = null,
+
+            colors: ?[][]Color = null,
+            windows: ?[][]vaxis.Window = null,
+        } = .{},
     } = .{},
 
     pub fn init(allocator: std.mem.Allocator) !MyApp {
@@ -70,6 +91,23 @@ const MyApp = struct {
         // memory
         self.vx.deinit(self.allocator, self.tty.anyWriter());
         self.tty.deinit();
+
+        self.detiles();
+    }
+
+    pub fn detiles(self: *MyApp) void {
+        if (self.app.tiles.colors) |colors| {
+            for (colors) |row| {
+                self.allocator.free(row);
+            }
+            self.allocator.free(colors);
+        }
+        if (self.app.tiles.windows) |windows| {
+            for (windows) |row| {
+                self.allocator.free(row);
+            }
+            self.allocator.free(windows);
+        }
     }
 
     pub fn run(self: *MyApp) !void {
@@ -120,36 +158,83 @@ const MyApp = struct {
 
     /// Update our application state from an event
     pub fn update(self: *MyApp, event: Event) !void {
+        // universal events
         switch (event) {
             .key_press => |key| {
-                // key.matches does some basic matching algorithms. Key matching can be complex in
-                // the presence of kitty keyboard encodings, this will generally be a good approach.
-                // There are other matching functions available for specific purposes, as well
                 if (key.matches('c', .{ .ctrl = true }))
                     self.should_quit = true;
-                if (key.matches('r', .{}))
-                    self.app.color.r = !self.app.color.r;
-                if (key.matches('g', .{}))
-                    self.app.color.g = !self.app.color.g;
-                if (key.matches('b', .{}))
-                    self.app.color.b = !self.app.color.b;
-                if (key.matches('q', .{}) and (self.app.state == .goodbye))
-                    self.should_quit = true;
+                if (key.matches('1', .{}) and (self.app.state != .child)) {
+                    self.app.child = .{};
+                    self.app.state = .child;
+                }
+                if (key.matches('2', .{}) and (self.app.state != .tiles)) {
+                    self.detiles();
+                    self.app.tiles = .{};
+                    self.app.state = .tiles;
+                }
             },
             .mouse => |mouse| self.mouse = mouse,
             .winsize => |ws| try self.vx.resize(self.allocator, self.tty.anyWriter(), ws),
             else => {},
+        }
+        // state specific events
+        switch (self.app.state) {
+            // child state
+            .child => switch (event) {
+                .key_press => |key| {
+                    // key.matches does some basic matching algorithms. Key matching can be complex in
+                    // the presence of kitty keyboard encodings, this will generally be a good approach.
+                    // There are other matching functions available for specific purposes, as well
+                    if (!self.app.child.clicked) {
+                        if (key.matches('r', .{}))
+                            self.app.child.color.r = !self.app.child.color.r;
+                        if (key.matches('g', .{}))
+                            self.app.child.color.g = !self.app.child.color.g;
+                        if (key.matches('b', .{}))
+                            self.app.child.color.b = !self.app.child.color.b;
+                    }
+                    if (key.matches('q', .{}) and (self.app.child.state == .goodbye))
+                        self.should_quit = true;
+                },
+                else => {},
+            },
+            .tiles => {
+                switch (self.app.tiles.state) {
+                    .selection => {
+                        self.app.tiles.width = 2;
+                        self.app.tiles.height = 2;
+
+                        self.app.tiles.state = .tiles;
+                        self.app.tiles.colors = try self.allocator.alloc([]Color, self.app.tiles.height.?);
+                        self.app.tiles.windows = try self.allocator.alloc([]vaxis.Window, self.app.tiles.height.?);
+                        var seed: u64 = 0;
+                        try std.posix.getrandom(std.mem.asBytes(&seed));
+                        var prng = std.rand.DefaultPrng.init(seed);
+                        const rand = prng.random();
+
+                        for (self.app.tiles.colors.?, self.app.tiles.windows.?) |*c_row, *w_row| {
+                            c_row.* = try self.allocator.alloc(Color, self.app.tiles.width.?);
+                            for (c_row.*) |*color| {
+                                color.*.r = rand.int(u8);
+                                color.*.g = rand.int(u8);
+                                color.*.b = rand.int(u8);
+                            }
+                            w_row.* = try self.allocator.alloc(vaxis.Window, self.app.tiles.width.?);
+                        }
+                    },
+                    .tiles => {
+                        switch (event) {
+                            else => {},
+                        }
+                    },
+                }
+            },
         }
     }
 
     /// Draw our current state
     pub fn draw(self: *MyApp) void {
         var redraw: bool = false;
-
-        const msg = switch (self.app.state) {
-            .hello => "Hello, world!",
-            .goodbye => "Goodbye, world!",
-        };
 
         // Window is a bounded area with a view to the screen. You cannot draw outside of a windows
         // bounds. They are light structures, not intended to be stored.
@@ -164,58 +249,111 @@ const MyApp = struct {
         // be changing that as well
         self.vx.setMouseShape(.default);
 
-        const child = win.child(.{
-            .x_off = (win.width / 2) - (msg.len / 2),
-            .y_off = win.height / 2 + 1,
-            .width = .{ .limit = msg.len },
-            .height = .{ .limit = 1 },
-        });
+        switch (self.app.state) {
+            .child => {
 
-        var style: vaxis.Style = .{
-            .fg = .{ .rgb = [_]u8{ 0, 0, 0 } },
-            .reverse = self.app.reverse,
-        };
-        // change color of text
-        if (self.app.color.r) {
-            switch (style.fg) {
-                .rgb => |rgb| style.fg = .{ .rgb = [_]u8{ 255, rgb[1], rgb[2] } },
-                else => {},
-            }
-        }
-        if (self.app.color.g) {
-            switch (style.fg) {
-                .rgb => |rgb| style.fg = .{ .rgb = [_]u8{ rgb[0], 255, rgb[2] } },
-                else => {},
-            }
-        }
-        if (self.app.color.b) {
-            switch (style.fg) {
-                .rgb => |rgb| style.fg = .{ .rgb = [_]u8{ rgb[0], rgb[1], 255 } },
-                else => {},
-            }
-        }
+                // set the message
+                const msg = switch (self.app.child.state) {
+                    .hello => "Hello, world!",
+                    .goodbye => "Goodbye, world!",
+                };
 
-        // mouse events are much easier to handle in the draw cycle. Windows have a helper method to
-        // determine if the event occurred in the target window. This method returns null if there
-        // is no mouse event, or if it occurred outside of the window
-        if (child.hasMouse(self.mouse)) |mouse| {
-            self.vx.setMouseShape(.text);
-            self.app.reverse = true;
-            if ((mouse.button == .left) and (mouse.type == .release)) {
-                switch (self.app.state) {
-                    .hello => self.app.state = .goodbye,
-                    .goodbye => self.app.state = .hello,
+                const child = win.child(.{
+                    .x_off = (win.width / 2) - (msg.len / 2),
+                    .y_off = win.height / 2 + 1,
+                    .width = .{ .limit = msg.len },
+                    .height = .{ .limit = 1 },
+                });
+
+                // mouse events are much easier to handle in the draw cycle. Windows have a helper method to
+                // determine if the event occurred in the target window. This method returns null if there
+                // is no mouse event, or if it occurred outside of the window
+
+                // start handling mouse events
+                const unclicked = if (self.mouse) |mouse| blk: {
+                    break :blk (mouse.type == .release);
+                } else false;
+                var unhovered = (self.mouse != null);
+
+                // window mouse events
+                if (child.hasMouse(self.mouse)) |mouse| {
+                    // mouse shape doesnt work
+                    self.vx.setMouseShape(.text);
+                    self.app.child.hovered = true;
+                    unhovered = false;
+                    // button logic
+                    if ((mouse.button == .left)) {
+                        if (self.app.child.clicked and (mouse.type == .release)) {
+                            switch (self.app.child.state) {
+                                .hello => self.app.child.state = .goodbye,
+                                .goodbye => self.app.child.state = .hello,
+                            }
+                            redraw = true;
+                        }
+                        if (mouse.type == .press) self.app.child.clicked = true;
+                    }
+                    // mouse event handled
+                    self.mouse = null;
                 }
-            }
-            redraw = true;
-            self.mouse = null;
-        } else self.app.reverse = false;
 
-        // Print a text segment to the screen. This is a helper function which iterates over the
-        // text field for graphemes. Alternatively, you can implement your own print functions and
-        // use the writeCell API.
-        _ = try child.printSegment(.{ .text = msg, .style = style }, .{});
+                // finish handling mouse events
+                if (unclicked) self.app.child.clicked = false;
+                if (unhovered) self.app.child.hovered = false;
 
+                // define the style of the text in child
+                var style: vaxis.Style = .{
+                    .fg = .{ .rgb = [_]u8{ 0, 0, 0 } },
+                    .reverse = self.app.child.hovered,
+                };
+
+                // change color of text
+                if (self.app.child.color.r) {
+                    switch (style.fg) {
+                        .rgb => |rgb| style.fg = .{ .rgb = [_]u8{ 255, rgb[1], rgb[2] } },
+                        else => {},
+                    }
+                }
+                if (self.app.child.color.g) {
+                    switch (style.fg) {
+                        .rgb => |rgb| style.fg = .{ .rgb = [_]u8{ rgb[0], 255, rgb[2] } },
+                        else => {},
+                    }
+                }
+                if (self.app.child.color.b) {
+                    switch (style.fg) {
+                        .rgb => |rgb| style.fg = .{ .rgb = [_]u8{ rgb[0], rgb[1], 255 } },
+                        else => {},
+                    }
+                }
+
+                // Print a text segment to the screen. This is a helper function which iterates over the
+                // text field for graphemes. Alternatively, you can implement your own print functions and
+                // use the writeCell API.
+                _ = try child.printSegment(.{ .text = msg, .style = style }, .{});
+            },
+
+            .tiles => {
+                switch (self.app.tiles.state) {
+                    .selection => {
+                        _ = 0;
+                    },
+                    .tiles => {
+                        const height = self.app.tiles.height.?;
+                        const width = self.app.tiles.width.?;
+                        for (0..height) |i| {
+                            for (0..width) |j| {
+                                self.app.tiles.windows.?[i][j] = win.child(.{
+                                    .x_off = (win.width / width) * i,
+                                    .y_off = (win.height / height) * j,
+                                    .width = .{ .limit = win.width / width },
+                                    .height = .{ .limit = win.height / height },
+                                });
+                            }
+                        }
+                    },
+                }
+            },
+        }
         // if we need to redraw, call draw again
         if (redraw) self.draw();
     }
