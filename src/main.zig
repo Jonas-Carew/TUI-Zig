@@ -30,12 +30,6 @@ const Event = union(enum) {
     // is started
 };
 
-const Color = struct {
-    r: u8,
-    g: u8,
-    b: u8,
-};
-
 /// The application state
 const MyApp = struct {
     allocator: std.mem.Allocator,
@@ -70,8 +64,7 @@ const MyApp = struct {
             height: ?usize = null,
             width: ?usize = null,
 
-            colors: ?[][]Color = null,
-            windows: ?[][]vaxis.Window = null,
+            colors: ?[][]vaxis.Color = null,
         } = .{},
     } = .{},
 
@@ -101,12 +94,6 @@ const MyApp = struct {
                 self.allocator.free(row);
             }
             self.allocator.free(colors);
-        }
-        if (self.app.tiles.windows) |windows| {
-            for (windows) |row| {
-                self.allocator.free(row);
-            }
-            self.allocator.free(windows);
         }
     }
 
@@ -205,21 +192,21 @@ const MyApp = struct {
                         self.app.tiles.height = 2;
 
                         self.app.tiles.state = .tiles;
-                        self.app.tiles.colors = try self.allocator.alloc([]Color, self.app.tiles.height.?);
-                        self.app.tiles.windows = try self.allocator.alloc([]vaxis.Window, self.app.tiles.height.?);
+                        self.app.tiles.colors = try self.allocator.alloc([]vaxis.Color, self.app.tiles.height.?);
+
                         var seed: u64 = 0;
                         try std.posix.getrandom(std.mem.asBytes(&seed));
                         var prng = std.rand.DefaultPrng.init(seed);
                         const rand = prng.random();
 
-                        for (self.app.tiles.colors.?, self.app.tiles.windows.?) |*c_row, *w_row| {
-                            c_row.* = try self.allocator.alloc(Color, self.app.tiles.width.?);
-                            for (c_row.*) |*color| {
-                                color.*.r = rand.int(u8);
-                                color.*.g = rand.int(u8);
-                                color.*.b = rand.int(u8);
+                        for (self.app.tiles.colors.?) |*row| {
+                            row.* = try self.allocator.alloc(vaxis.Color, self.app.tiles.width.?);
+                            for (row.*) |*color| {
+                                const r = rand.int(u8);
+                                const g = rand.int(u8);
+                                const b = rand.int(u8);
+                                color.* = .{ .rgb = [_]u8{ r, g, b } };
                             }
-                            w_row.* = try self.allocator.alloc(vaxis.Window, self.app.tiles.width.?);
                         }
                     },
                     .tiles => {
@@ -340,14 +327,20 @@ const MyApp = struct {
                     .tiles => {
                         const height = self.app.tiles.height.?;
                         const width = self.app.tiles.width.?;
+                        const tile_w = win.width / width;
+                        const tile_h = win.height / width;
                         for (0..height) |i| {
                             for (0..width) |j| {
-                                self.app.tiles.windows.?[i][j] = win.child(.{
-                                    .x_off = (win.width / width) * i,
-                                    .y_off = (win.height / height) * j,
-                                    .width = .{ .limit = win.width / width },
-                                    .height = .{ .limit = win.height / height },
-                                });
+                                const cell: vaxis.Cell = .{
+                                    .style = .{
+                                        .bg = self.app.tiles.colors.?[i][j],
+                                    },
+                                };
+                                for (0..tile_w) |x| {
+                                    for (0..tile_h) |y| {
+                                        win.writeCell(x + (i * tile_w), y + (j * tile_h), cell);
+                                    }
+                                }
                             }
                         }
                     },
