@@ -328,21 +328,19 @@ const MyApp = struct {
                     .tiles => {
                         const height = self.app.tiles.height.?;
                         const width = self.app.tiles.width.?;
-                        const tile_h = win.height / height;
-                        const tile_w = win.width / width;
                         for (0..height) |h| {
                             for (0..width) |w| {
                                 const cell: vaxis.Cell = .{
                                     .char = .{
-                                        .grapheme = &[_]u8{':'},
+                                        .grapheme = if ((w + h) % 2 == 0) "/" else "\\",
                                     },
                                     .style = .{
                                         .bg = self.app.tiles.colors.?[h][w],
                                     },
                                 };
-                                for (0..tile_h) |y| {
-                                    for (0..tile_w) |x| {
-                                        win.writeCell(x + (w * tile_w), y + (h * tile_h), cell);
+                                for (((h * win.height) / height)..(((h + 1) * win.height) / height)) |y| {
+                                    for (((w * win.width) / width)..(((w + 1) * win.width) / width)) |x| {
+                                        win.writeCell(x, y, cell);
                                     }
                                 }
                             }
