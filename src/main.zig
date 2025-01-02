@@ -188,16 +188,17 @@ const MyApp = struct {
             .tiles => {
                 switch (self.app.tiles.state) {
                     .selection => {
-                        self.app.tiles.width = 2;
-                        self.app.tiles.height = 2;
-
-                        self.app.tiles.state = .tiles;
-                        self.app.tiles.colors = try self.allocator.alloc([]vaxis.Color, self.app.tiles.height.?);
-
                         var seed: u64 = 0;
                         try std.posix.getrandom(std.mem.asBytes(&seed));
                         var prng = std.rand.DefaultPrng.init(seed);
                         const rand = prng.random();
+
+                        self.app.tiles.height = (rand.int(u4) % 10) + 1;
+                        self.app.tiles.width = (rand.int(u4) % 10) + 1;
+
+                        self.app.tiles.state = .tiles;
+                        self.app.tiles.colors =
+                            try self.allocator.alloc([]vaxis.Color, self.app.tiles.height.?);
 
                         for (self.app.tiles.colors.?) |*row| {
                             row.* = try self.allocator.alloc(vaxis.Color, self.app.tiles.width.?);
@@ -327,18 +328,21 @@ const MyApp = struct {
                     .tiles => {
                         const height = self.app.tiles.height.?;
                         const width = self.app.tiles.width.?;
+                        const tile_h = win.height / height;
                         const tile_w = win.width / width;
-                        const tile_h = win.height / width;
-                        for (0..height) |i| {
-                            for (0..width) |j| {
+                        for (0..height) |h| {
+                            for (0..width) |w| {
                                 const cell: vaxis.Cell = .{
+                                    .char = .{
+                                        .grapheme = &[_]u8{':'},
+                                    },
                                     .style = .{
-                                        .bg = self.app.tiles.colors.?[i][j],
+                                        .bg = self.app.tiles.colors.?[h][w],
                                     },
                                 };
-                                for (0..tile_w) |x| {
-                                    for (0..tile_h) |y| {
-                                        win.writeCell(x + (i * tile_w), y + (j * tile_h), cell);
+                                for (0..tile_h) |y| {
+                                    for (0..tile_w) |x| {
+                                        win.writeCell(x + (w * tile_w), y + (h * tile_h), cell);
                                     }
                                 }
                             }
