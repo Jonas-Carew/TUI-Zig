@@ -71,7 +71,9 @@ const MyApp = struct {
                 input: ?vaxis.widgets.TextInput = null,
 
                 height: ?usize = null,
+                height_text: ?[]const u8 = null,
                 width: ?usize = null,
+                width_text: ?[]const u8 = null,
 
                 colors: ?[][]vaxis.Color = null,
             },
@@ -103,10 +105,11 @@ const MyApp = struct {
         // Deinit takes an optional allocator. You can choose to pass an allocator to clean up
         // memory, or pass null if your application is shutting down and let the OS clean up the
         // memory
+
         self.vx.deinit(self.allocator, self.tty.anyWriter());
         self.tty.deinit();
 
-        self.detiles();
+        if (self.app.state == .Tiles) self.detiles();
     }
 
     pub fn detiles(self: *MyApp) void {
@@ -114,6 +117,9 @@ const MyApp = struct {
             .Tiles => |*Tiles| {
                 if (Tiles.input) |*input| input.*.deinit();
                 if (Tiles.uni) |uni| uni.deinit();
+
+                if (Tiles.height_text) |htext| self.allocator.free(htext);
+                if (Tiles.width_text) |wtext| self.allocator.free(wtext);
 
                 if (Tiles.colors) |colors| {
                     for (colors) |row| {
@@ -181,22 +187,31 @@ const MyApp = struct {
                     self.should_quit = true;
                     return;
                 }
-
-                if (key.matches(vaxis.Key.escape, .{}) and (!self.app.menu.active)) {
-                    self.app.menu.active = true;
-                }
             },
             .mouse => |mouse| self.mouse = mouse,
             .winsize => |ws| try self.vx.resize(self.allocator, self.tty.anyWriter(), ws),
             else => {},
         }
         // no event handling while in the menu
-        if (self.app.menu.active) {
+        if (!self.app.menu.active) {
+            switch (event) {
+                .key_press => |key| {
+                    if (key.matches(vaxis.Key.escape, .{})) {
+                        self.app.menu.active = true;
+                    }
+                },
+                else => {},
+            }
+        } else {
             switch (event) {
                 .key_press => |key| {
                     const len = @typeInfo(State).Enum.fields.len;
                     const cp0 = 48; // codepoint of 0
-                    //
+
+                    if (key.matches(vaxis.Key.escape, .{})) {
+                        self.app.menu.active = false;
+                        self.app.menu.state = self.app.state;
+                    }
                     if (key.matchExact(vaxis.Key.tab, .{})) {
                         const int = @intFromEnum(self.app.menu.state);
                         self.app.menu.state = @enumFromInt((int + 1) % len);
@@ -205,8 +220,7 @@ const MyApp = struct {
                         self.app.menu.state = @enumFromInt(key.codepoint - cp0 - 1);
                     }
                     if (key.matches(vaxis.Key.enter, .{})) {
-                        if ((self.app.state == .Tiles) and (self.app.menu.state != .Tiles))
-                            self.detiles();
+                        if (self.app.state == .Tiles) self.detiles();
                         switch (self.app.menu.state) {
                             .Child => {
                                 self.app.state = .{ .Child = .{} };
@@ -262,32 +276,55 @@ const MyApp = struct {
                         switch (event) {
                             .key_press => |key| {
                                 if (key.matches(vaxis.Key.enter, .{})) {
-                                    _ = 0;
+                                    enter: {
+                                        if (Tiles.height == null) {
+                                            Tiles.height_text = try Tiles.input.?.toOwnedSlice();
+                                            Tiles.height = std.fmt.parseInt(
+                                                u8,
+                                                Tiles.height_text.?,
+                                                10,
+                                            ) catch break :enter;
+                                            if ((Tiles.height.? <= 0) or (Tiles.height.? > 10)) {
+                                                Tiles.height = null;
+                                            }
+                                        } else if (Tiles.width == null) {
+                                            Tiles.width_text = try Tiles.input.?.toOwnedSlice();
+                                            Tiles.width = std.fmt.parseInt(
+                                                u8,
+                                                Tiles.width_text.?,
+                                                10,
+                                            ) catch break :enter;
+                                            if ((Tiles.width.? <= 0) or (Tiles.width.? > 10)) {
+                                                Tiles.width = null;
+                                            }
+
+                                            // width and height inputted successfully
+                                            if (Tiles.width != null) {
+                                                var seed: u64 = 0;
+                                                try std.posix.getrandom(std.mem.asBytes(&seed));
+                                                var prng = std.rand.DefaultPrng.init(seed);
+                                                const rand = prng.random();
+
+                                                Tiles.colors =
+                                                    try self.allocator.alloc([]vaxis.Color, Tiles.height.?);
+
+                                                for (Tiles.colors.?) |*row| {
+                                                    row.* = try self.allocator.alloc(vaxis.Color, Tiles.width.?);
+                                                    for (row.*) |*color| {
+                                                        const r = rand.int(u8);
+                                                        const g = rand.int(u8);
+                                                        const b = rand.int(u8);
+                                                        color.* = .{ .rgb = [_]u8{ r, g, b } };
+                                                    }
+                                                }
+                                                Tiles.state = .tiles;
+                                            }
+                                        }
+                                    }
                                 } else try Tiles.input.?.update(.{ .key_press = key });
                             },
                             else => {},
                         }
-
-                        //var seed: u64 = 0;
-                        //try std.posix.getrandom(std.mem.asBytes(&seed));
-                        //var prng = std.rand.DefaultPrng.init(seed);
-                        //const rand = prng.random();
-
-                        //Tiles.height = (rand.int(u4) % 10) + 1;
-                        //Tiles.width = (rand.int(u4) % 10) + 1;
-
-                        //Tiles.colors =
-                        //    try self.allocator.alloc([]vaxis.Color, Tiles.height.?);
-
-                        //for (Tiles.colors.?) |*row| {
-                        //    row.* = try self.allocator.alloc(vaxis.Color, Tiles.width.?);
-                        //    for (row.*) |*color| {
-                        //        const r = rand.int(u8);
-                        //        const g = rand.int(u8);
-                        //        const b = rand.int(u8);
-                        //        color.* = .{ .rgb = [_]u8{ r, g, b } };
-                        //    }
-                        //}
 
                         //Tiles.state = .tiles;
                     },
@@ -312,6 +349,7 @@ const MyApp = struct {
         // applications typically will be immediate mode, and you will redraw your entire
         // application during the draw cycle.
         win.clear();
+        win.setCursorShape(.default);
         win.hideCursor();
 
         // In addition to clearing our window, we want to clear the mouse shape state since we may
@@ -440,18 +478,37 @@ const MyApp = struct {
                         });
 
                         const hMsg = "Input a height (1-10): ";
-                        const wMsg = "Input a width (1-10): ";
-                        _ = wMsg;
-                        _ = try select.printSegment(.{ .text = hMsg }, .{});
-                        select.setCursorShape(.underline_blink);
-                        select.showCursor(hMsg.len, 0);
                         const hWin = select.child(.{
                             .x_off = hMsg.len,
                             .y_off = 0,
                             .width = .{ .limit = select.width - hMsg.len },
                             .height = .{ .limit = 1 },
                         });
-                        Tiles.input.?.draw(hWin);
+
+                        const wMsg = "Input a width (1-10): ";
+                        const wWin = select.child(.{
+                            .x_off = wMsg.len,
+                            .y_off = 1,
+                            .width = .{ .limit = select.width - wMsg.len },
+                            .height = .{ .limit = 1 },
+                        });
+
+                        _ = try select.printSegment(.{ .text = hMsg }, .{});
+                        select.setCursorShape(.underline_blink);
+                        select.showCursor(hMsg.len, 0);
+
+                        // kinda backwards...it starts with no height (else)
+                        //  and then goes to the if block
+                        if (Tiles.height) |_| {
+                            _ = try hWin.printSegment(.{ .text = Tiles.height_text.? }, .{});
+                            _ = try select.printSegment(
+                                .{ .text = wMsg },
+                                .{ .row_offset = 1 },
+                            );
+                            Tiles.input.?.draw(wWin);
+                        } else {
+                            Tiles.input.?.draw(hWin);
+                        }
                     },
                     .tiles => {
                         const height = Tiles.height.?;
