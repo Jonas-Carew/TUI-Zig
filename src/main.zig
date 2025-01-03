@@ -30,6 +30,8 @@ const Event = union(enum) {
     // is started
 };
 
+const State = enum { Child, Tiles, Battle };
+
 /// The application state
 const MyApp = struct {
     allocator: std.mem.Allocator,
@@ -44,28 +46,47 @@ const MyApp = struct {
 
     /// A struct with all app variables
     app: struct {
-        state: enum { child, tiles } = .child,
-
-        child: struct {
-            state: enum { hello, goodbye } = .hello,
-
-            color: struct {
-                r: bool = true,
-                g: bool = true,
-                b: bool = true,
-            } = .{},
-            hovered: bool = false,
-            clicked: bool = false,
+        menu: struct {
+            active: bool = false,
+            state: State = .Child,
         } = .{},
 
-        tiles: struct {
-            state: enum { selection, tiles } = .selection,
+        state: union(State) {
+            Child: struct {
+                state: enum { hello, goodbye } = .hello,
 
-            height: ?usize = null,
-            width: ?usize = null,
+                color: struct {
+                    r: bool = true,
+                    g: bool = true,
+                    b: bool = true,
+                } = .{},
+                hovered: bool = false,
+                clicked: bool = false,
+            },
 
-            colors: ?[][]vaxis.Color = null,
-        } = .{},
+            Tiles: struct {
+                state: enum { selection, tiles } = .selection,
+
+                uni: ?vaxis.Unicode = null,
+                input: ?vaxis.widgets.TextInput = null,
+
+                height: ?usize = null,
+                width: ?usize = null,
+
+                colors: ?[][]vaxis.Color = null,
+            },
+
+            Battle: struct {
+                pub const Attack = struct {
+                    name: []const u8,
+                    damage: u32,
+                };
+
+                menuState: enum { main, attack } = .main,
+
+                attacks: [4]?Attack = .{ null, null, null, null },
+            },
+        } = .{ .Child = .{} },
     } = .{},
 
     pub fn init(allocator: std.mem.Allocator) !MyApp {
@@ -89,11 +110,19 @@ const MyApp = struct {
     }
 
     pub fn detiles(self: *MyApp) void {
-        if (self.app.tiles.colors) |colors| {
-            for (colors) |row| {
-                self.allocator.free(row);
-            }
-            self.allocator.free(colors);
+        switch (self.app.state) {
+            .Tiles => |*Tiles| {
+                if (Tiles.input) |*input| input.*.deinit();
+                if (Tiles.uni) |uni| uni.deinit();
+
+                if (Tiles.colors) |colors| {
+                    for (colors) |row| {
+                        self.allocator.free(row);
+                    }
+                    self.allocator.free(colors);
+                }
+            },
+            else => unreachable,
         }
     }
 
@@ -148,74 +177,120 @@ const MyApp = struct {
         // universal events
         switch (event) {
             .key_press => |key| {
-                if (key.matches('c', .{ .ctrl = true }))
+                if (key.matches('c', .{ .ctrl = true })) {
                     self.should_quit = true;
-                if (key.matches('1', .{}) and (self.app.state != .child)) {
-                    self.app.child = .{};
-                    self.app.state = .child;
+                    return;
                 }
-                if (key.matches('2', .{}) and (self.app.state != .tiles)) {
-                    self.detiles();
-                    self.app.tiles = .{};
-                    self.app.state = .tiles;
+
+                if (key.matches(vaxis.Key.escape, .{}) and (!self.app.menu.active)) {
+                    self.app.menu.active = true;
                 }
             },
             .mouse => |mouse| self.mouse = mouse,
             .winsize => |ws| try self.vx.resize(self.allocator, self.tty.anyWriter(), ws),
             else => {},
         }
+        // no event handling while in the menu
+        if (self.app.menu.active) {
+            switch (event) {
+                .key_press => |key| {
+                    if (key.matchExact(vaxis.Key.tab, .{})) {
+                        const int = @intFromEnum(self.app.menu.state);
+                        const len = @typeInfo(State).Enum.fields.len;
+                        self.app.menu.state = @enumFromInt((int + 1) % len);
+                    }
+                    if (key.matches(vaxis.Key.enter, .{})) {
+                        if ((self.app.state == .Tiles) and (self.app.menu.state != .Tiles))
+                            self.detiles();
+                        switch (self.app.menu.state) {
+                            .Child => {
+                                self.app.state = .{ .Child = .{} };
+                            },
+                            .Tiles => {
+                                self.app.state = .{ .Tiles = .{} };
+                                switch (self.app.state) {
+                                    .Tiles => |*Tiles| {
+                                        Tiles.uni = try vaxis.Unicode.init(self.allocator);
+                                        Tiles.input = vaxis.widgets.TextInput.init(
+                                            self.allocator,
+                                            &Tiles.uni.?,
+                                        );
+                                    },
+                                    else => unreachable,
+                                }
+                            },
+                            .Battle => {
+                                self.app.state = .{ .Battle = .{} };
+                            },
+                        }
+                        self.app.menu.active = false;
+                    }
+                },
+                else => {},
+            }
+            return;
+        }
         // state specific events
         switch (self.app.state) {
-            // child state
-            .child => switch (event) {
+            //Bchild state
+            .Child => |*Child| switch (event) {
                 .key_press => |key| {
                     // key.matches does some basic matching algorithms. Key matching can be complex in
                     // the presence of kitty keyboard encodings, this will generally be a good approach.
                     // There are other matching functions available for specific purposes, as well
-                    if (!self.app.child.clicked) {
+                    if (!Child.clicked) {
                         if (key.matches('r', .{}))
-                            self.app.child.color.r = !self.app.child.color.r;
+                            Child.color.r = !Child.color.r;
                         if (key.matches('g', .{}))
-                            self.app.child.color.g = !self.app.child.color.g;
+                            Child.color.g = !Child.color.g;
                         if (key.matches('b', .{}))
-                            self.app.child.color.b = !self.app.child.color.b;
+                            Child.color.b = !Child.color.b;
                     }
-                    if (key.matches('q', .{}) and (self.app.child.state == .goodbye))
+                    if (key.matches('q', .{}) and (Child.state == .goodbye))
                         self.should_quit = true;
                 },
                 else => {},
             },
-            .tiles => {
-                switch (self.app.tiles.state) {
+            .Tiles => |*Tiles| {
+                switch (Tiles.state) {
                     .selection => {
-                        var seed: u64 = 0;
-                        try std.posix.getrandom(std.mem.asBytes(&seed));
-                        var prng = std.rand.DefaultPrng.init(seed);
-                        const rand = prng.random();
-
-                        self.app.tiles.height = (rand.int(u4) % 10) + 1;
-                        self.app.tiles.width = (rand.int(u4) % 10) + 1;
-
-                        self.app.tiles.state = .tiles;
-                        self.app.tiles.colors =
-                            try self.allocator.alloc([]vaxis.Color, self.app.tiles.height.?);
-
-                        for (self.app.tiles.colors.?) |*row| {
-                            row.* = try self.allocator.alloc(vaxis.Color, self.app.tiles.width.?);
-                            for (row.*) |*color| {
-                                const r = rand.int(u8);
-                                const g = rand.int(u8);
-                                const b = rand.int(u8);
-                                color.* = .{ .rgb = [_]u8{ r, g, b } };
-                            }
-                        }
-                    },
-                    .tiles => {
                         switch (event) {
+                            .key_press => |key| {
+                                if (key.matches(vaxis.Key.enter, .{})) {
+                                    _ = 0;
+                                } else try Tiles.input.?.update(.{ .key_press = key });
+                            },
                             else => {},
                         }
+
+                        //var seed: u64 = 0;
+                        //try std.posix.getrandom(std.mem.asBytes(&seed));
+                        //var prng = std.rand.DefaultPrng.init(seed);
+                        //const rand = prng.random();
+
+                        //Tiles.height = (rand.int(u4) % 10) + 1;
+                        //Tiles.width = (rand.int(u4) % 10) + 1;
+
+                        //Tiles.colors =
+                        //    try self.allocator.alloc([]vaxis.Color, Tiles.height.?);
+
+                        //for (Tiles.colors.?) |*row| {
+                        //    row.* = try self.allocator.alloc(vaxis.Color, Tiles.width.?);
+                        //    for (row.*) |*color| {
+                        //        const r = rand.int(u8);
+                        //        const g = rand.int(u8);
+                        //        const b = rand.int(u8);
+                        //        color.* = .{ .rgb = [_]u8{ r, g, b } };
+                        //    }
+                        //}
+
+                        //Tiles.state = .tiles;
                     },
+                    .tiles => {},
                 }
+            },
+            .Battle => |Battle| {
+                _ = Battle;
             },
         }
     }
@@ -232,21 +307,50 @@ const MyApp = struct {
         // applications typically will be immediate mode, and you will redraw your entire
         // application during the draw cycle.
         win.clear();
+        win.hideCursor();
 
         // In addition to clearing our window, we want to clear the mouse shape state since we may
         // be changing that as well
         self.vx.setMouseShape(.default);
 
-        switch (self.app.state) {
-            .child => {
+        if (self.app.menu.active) {
+            const states = @typeInfo(State).Enum.fields;
+
+            const menu = win.child(.{
+                .x_off = 1,
+                .y_off = 1,
+                .width = .{ .limit = win.width - 2 },
+                .height = .{ .limit = (states.len * 2) + 1 },
+            });
+
+            const msg = "Select the app to run";
+            _ = try menu.printSegment(.{ .text = msg }, .{});
+
+            inline for (0..states.len) |i| {
+                const style = vaxis.Style{
+                    .reverse = (i == @intFromEnum(self.app.menu.state)),
+                };
+                const num = [1]u8{'1' + i};
+                const text = "[" ++ num ++ "]";
+                _ = try menu.printSegment(.{
+                    .text = text,
+                    .style = .{},
+                }, .{ .row_offset = 2 * (i + 1) });
+                _ = try menu.printSegment(.{
+                    .text = states[i].name,
+                    .style = style,
+                }, .{ .row_offset = 2 * (i + 1), .col_offset = 4 });
+            }
+        } else switch (self.app.state) {
+            .Child => |*Child| {
 
                 // set the message
-                const msg = switch (self.app.child.state) {
+                const msg = switch (Child.state) {
                     .hello => "Hello, world!",
                     .goodbye => "Goodbye, world!",
                 };
 
-                const child = win.child(.{
+                const child_win = win.child(.{
                     .x_off = (win.width / 2) - (msg.len / 2),
                     .y_off = win.height / 2 + 1,
                     .width = .{ .limit = msg.len },
@@ -264,50 +368,50 @@ const MyApp = struct {
                 var unhovered = (self.mouse != null);
 
                 // window mouse events
-                if (child.hasMouse(self.mouse)) |mouse| {
+                if (child_win.hasMouse(self.mouse)) |mouse| {
                     // mouse shape doesnt work
                     self.vx.setMouseShape(.text);
-                    self.app.child.hovered = true;
+                    Child.hovered = true;
                     unhovered = false;
                     // button logic
                     if ((mouse.button == .left)) {
-                        if (self.app.child.clicked and (mouse.type == .release)) {
-                            switch (self.app.child.state) {
-                                .hello => self.app.child.state = .goodbye,
-                                .goodbye => self.app.child.state = .hello,
+                        if (Child.clicked and (mouse.type == .release)) {
+                            switch (Child.state) {
+                                .hello => Child.state = .goodbye,
+                                .goodbye => Child.state = .hello,
                             }
                             redraw = true;
                         }
-                        if (mouse.type == .press) self.app.child.clicked = true;
+                        if (mouse.type == .press) Child.clicked = true;
                     }
                     // mouse event handled
                     self.mouse = null;
                 }
 
                 // finish handling mouse events
-                if (unclicked) self.app.child.clicked = false;
-                if (unhovered) self.app.child.hovered = false;
+                if (unclicked) Child.clicked = false;
+                if (unhovered) Child.hovered = false;
 
                 // define the style of the text in child
-                var style: vaxis.Style = .{
+                var style = vaxis.Style{
                     .fg = .{ .rgb = [_]u8{ 0, 0, 0 } },
-                    .reverse = self.app.child.hovered,
+                    .reverse = Child.hovered,
                 };
 
                 // change color of text
-                if (self.app.child.color.r) {
+                if (Child.color.r) {
                     switch (style.fg) {
                         .rgb => |rgb| style.fg = .{ .rgb = [_]u8{ 255, rgb[1], rgb[2] } },
                         else => {},
                     }
                 }
-                if (self.app.child.color.g) {
+                if (Child.color.g) {
                     switch (style.fg) {
                         .rgb => |rgb| style.fg = .{ .rgb = [_]u8{ rgb[0], 255, rgb[2] } },
                         else => {},
                     }
                 }
-                if (self.app.child.color.b) {
+                if (Child.color.b) {
                     switch (style.fg) {
                         .rgb => |rgb| style.fg = .{ .rgb = [_]u8{ rgb[0], rgb[1], 255 } },
                         else => {},
@@ -317,17 +421,36 @@ const MyApp = struct {
                 // Print a text segment to the screen. This is a helper function which iterates over the
                 // text field for graphemes. Alternatively, you can implement your own print functions and
                 // use the writeCell API.
-                _ = try child.printSegment(.{ .text = msg, .style = style }, .{});
+                _ = try child_win.printSegment(.{ .text = msg, .style = style }, .{});
             },
 
-            .tiles => {
-                switch (self.app.tiles.state) {
+            .Tiles => |*Tiles| {
+                switch (Tiles.state) {
                     .selection => {
-                        _ = 0;
+                        const select = win.child(.{
+                            .x_off = 1,
+                            .y_off = 1,
+                            .width = .{ .limit = win.width - 2 },
+                            .height = .{ .limit = 2 },
+                        });
+
+                        const hMsg = "Input a height (1-10): ";
+                        const wMsg = "Input a width (1-10): ";
+                        _ = wMsg;
+                        _ = try select.printSegment(.{ .text = hMsg }, .{});
+                        select.setCursorShape(.underline_blink);
+                        select.showCursor(hMsg.len, 0);
+                        const hWin = select.child(.{
+                            .x_off = hMsg.len,
+                            .y_off = 0,
+                            .width = .{ .limit = select.width - hMsg.len },
+                            .height = .{ .limit = 1 },
+                        });
+                        Tiles.input.?.draw(hWin);
                     },
                     .tiles => {
-                        const height = self.app.tiles.height.?;
-                        const width = self.app.tiles.width.?;
+                        const height = Tiles.height.?;
+                        const width = Tiles.width.?;
                         for (0..height) |h| {
                             for (0..width) |w| {
                                 const cell: vaxis.Cell = .{
@@ -335,7 +458,7 @@ const MyApp = struct {
                                         .grapheme = if ((w + h) % 2 == 0) "/" else "\\",
                                     },
                                     .style = .{
-                                        .bg = self.app.tiles.colors.?[h][w],
+                                        .bg = Tiles.colors.?[h][w],
                                     },
                                 };
                                 for (((h * win.height) / height)..(((h + 1) * win.height) / height)) |y| {
@@ -347,6 +470,10 @@ const MyApp = struct {
                         }
                     },
                 }
+            },
+
+            .Battle => |*Battles| {
+                _ = Battles;
             },
         }
         // if we need to redraw, call draw again
