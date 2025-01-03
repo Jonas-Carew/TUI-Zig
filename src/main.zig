@@ -30,9 +30,76 @@ const Event = union(enum) {
     // is started
 };
 
-const State = enum { Child, Tiles, Battle };
+const State = enum { Child, Tiles, Battle, Boxes, Cards };
 
 const BattleState = enum { Attack };
+const Cell = enum { empty, box };
+const Pos = struct {
+    x: usize,
+    y: usize,
+    inv: bool = false, // handles negative values, only for shift
+};
+const Suit = enum { heart, diamond, spade, club };
+const CardVal = enum { A, @"2", @"3", @"4", @"5", @"6", @"7", @"8", @"9", @"10", J, Q, K };
+const Card = struct {
+    suit: Suit,
+    value: CardVal,
+};
+
+const sortedDeck = [52]Card{
+    Card{ .suit = .spade, .value = .A },
+    Card{ .suit = .spade, .value = .@"2" },
+    Card{ .suit = .spade, .value = .@"3" },
+    Card{ .suit = .spade, .value = .@"4" },
+    Card{ .suit = .spade, .value = .@"5" },
+    Card{ .suit = .spade, .value = .@"6" },
+    Card{ .suit = .spade, .value = .@"7" },
+    Card{ .suit = .spade, .value = .@"8" },
+    Card{ .suit = .spade, .value = .@"9" },
+    Card{ .suit = .spade, .value = .@"10" },
+    Card{ .suit = .spade, .value = .J },
+    Card{ .suit = .spade, .value = .Q },
+    Card{ .suit = .spade, .value = .K },
+    Card{ .suit = .spade, .value = .A },
+    Card{ .suit = .diamond, .value = .@"2" },
+    Card{ .suit = .diamond, .value = .@"3" },
+    Card{ .suit = .diamond, .value = .@"4" },
+    Card{ .suit = .diamond, .value = .@"5" },
+    Card{ .suit = .diamond, .value = .@"6" },
+    Card{ .suit = .diamond, .value = .@"7" },
+    Card{ .suit = .diamond, .value = .@"8" },
+    Card{ .suit = .diamond, .value = .@"9" },
+    Card{ .suit = .diamond, .value = .@"10" },
+    Card{ .suit = .diamond, .value = .J },
+    Card{ .suit = .diamond, .value = .Q },
+    Card{ .suit = .diamond, .value = .K },
+    Card{ .suit = .club, .value = .K },
+    Card{ .suit = .club, .value = .Q },
+    Card{ .suit = .club, .value = .J },
+    Card{ .suit = .club, .value = .@"10" },
+    Card{ .suit = .club, .value = .@"9" },
+    Card{ .suit = .club, .value = .@"8" },
+    Card{ .suit = .club, .value = .@"7" },
+    Card{ .suit = .club, .value = .@"6" },
+    Card{ .suit = .club, .value = .@"5" },
+    Card{ .suit = .club, .value = .@"4" },
+    Card{ .suit = .club, .value = .@"3" },
+    Card{ .suit = .club, .value = .@"2" },
+    Card{ .suit = .club, .value = .A },
+    Card{ .suit = .heart, .value = .K },
+    Card{ .suit = .heart, .value = .Q },
+    Card{ .suit = .heart, .value = .J },
+    Card{ .suit = .heart, .value = .@"10" },
+    Card{ .suit = .heart, .value = .@"9" },
+    Card{ .suit = .heart, .value = .@"8" },
+    Card{ .suit = .heart, .value = .@"7" },
+    Card{ .suit = .heart, .value = .@"6" },
+    Card{ .suit = .heart, .value = .@"5" },
+    Card{ .suit = .heart, .value = .@"4" },
+    Card{ .suit = .heart, .value = .@"3" },
+    Card{ .suit = .heart, .value = .@"2" },
+    Card{ .suit = .heart, .value = .A },
+};
 
 /// The application state
 const MyApp = struct {
@@ -97,6 +164,66 @@ const MyApp = struct {
 
                 attacks: [4]?Attack = .{ null, null, null, null },
                 len: u4 = 0,
+            },
+
+            Boxes: struct {
+                pub fn shift(self: *@This(), pos: Pos, mov: Pos) bool {
+                    // out of bounds
+                    if (!mov.inv) {
+                        if ((pos.y + mov.y < 0) or (pos.y + mov.y >= self.field.len) or
+                            (pos.x + mov.x < 0) or (pos.x + mov.x >= self.field[0].len))
+                            return false;
+                    } else {
+                        if ((pos.y < mov.y) or (pos.y >= mov.y + self.field.len) or
+                            (pos.x < mov.x) or (pos.x >= mov.x + self.field[0].len))
+                            return false;
+                    }
+                    const end: Pos = if (!mov.inv) .{ .x = pos.x + mov.x, .y = pos.y + mov.y } else blk: {
+                        break :blk .{ .x = pos.x - mov.x, .y = pos.y - mov.y };
+                    };
+
+                    switch (self.field[end.y][end.x]) {
+                        // empty is movement
+                        .empty => {
+                            self.field[end.y][end.x] = self.field[pos.y][pos.x];
+                            self.field[pos.y][pos.x] = .empty;
+                            return true;
+                        },
+                        .box => {
+                            if (self.shift(end, mov)) {
+                                self.field[end.y][end.x] = self.field[pos.y][pos.x];
+                                self.field[pos.y][pos.x] = .empty;
+                                return true;
+                            } else return false;
+                        },
+                    }
+                }
+
+                field: [9][9]Cell = [1][9]Cell{
+                    [1]Cell{.empty} ** 9,
+                } ** 9,
+                pos: Pos = .{ .x = 0, .y = 0 },
+            },
+
+            Cards: struct {
+                pub fn shuffle(self: *@This()) !void {
+                    var seed: u64 = 0;
+                    try std.posix.getrandom(std.mem.asBytes(&seed));
+                    var prng = std.rand.DefaultPrng.init(seed);
+                    const rand = prng.random();
+                    var newDeck: [52]Card = [1]Card{.{ .suit = .spade, .value = .A }} ** 52;
+
+                    for (0..newDeck.len) |i| {
+                        const end: usize = self.deck.len - i;
+                        const pos = rand.int(usize) % end;
+                        newDeck[i] = self.deck[pos];
+                        self.deck[pos] = self.deck[i];
+                    }
+
+                    self.deck = newDeck;
+                }
+
+                deck: [52]Card = sortedDeck,
             },
         } = .{ .Child = .{} },
     } = .{},
@@ -269,6 +396,35 @@ const MyApp = struct {
                                     else => unreachable,
                                 }
                             },
+                            .Boxes => {
+                                self.app.state = .{ .Boxes = .{} };
+                                switch (self.app.state) {
+                                    .Boxes => |*Boxes| {
+                                        Boxes.field = [9][9]Cell{
+                                            [1]Cell{.empty} ** 9,
+                                            [1]Cell{.empty} ** 9,
+                                            [9]Cell{ .empty, .empty, .empty, .empty, .box, .empty, .empty, .empty, .empty },
+                                            [1]Cell{.empty} ** 9,
+                                            [9]Cell{ .empty, .empty, .box, .empty, .empty, .empty, .box, .empty, .empty },
+                                            [1]Cell{.empty} ** 9,
+                                            [9]Cell{ .empty, .empty, .empty, .empty, .box, .empty, .empty, .empty, .empty },
+                                            [1]Cell{.empty} ** 9,
+                                            [1]Cell{.empty} ** 9,
+                                        };
+                                        Boxes.pos = .{ .x = 4, .y = 4 };
+                                    },
+                                    else => unreachable,
+                                }
+                            },
+                            .Cards => {
+                                self.app.state = .{ .Cards = .{} };
+                                switch (self.app.state) {
+                                    .Cards => |*Cards| {
+                                        try Cards.shuffle();
+                                    },
+                                    else => unreachable,
+                                }
+                            },
                         }
                         self.app.menu.active = false;
                     }
@@ -396,6 +552,30 @@ const MyApp = struct {
                     },
                 }
             },
+            .Boxes => |*Boxes| {
+                switch (event) {
+                    .key_press => |key| {
+                        if (key.matches(vaxis.Key.left, .{})) {
+                            if (Boxes.shift(Boxes.pos, .{ .x = 1, .y = 0, .inv = true }))
+                                Boxes.pos.x -= 1;
+                        }
+                        if (key.matches(vaxis.Key.right, .{})) {
+                            if (Boxes.shift(Boxes.pos, .{ .x = 1, .y = 0 }))
+                                Boxes.pos.x += 1;
+                        }
+                        if (key.matches(vaxis.Key.up, .{})) {
+                            if (Boxes.shift(Boxes.pos, .{ .x = 0, .y = 1, .inv = true }))
+                                Boxes.pos.y -= 1;
+                        }
+                        if (key.matches(vaxis.Key.down, .{})) {
+                            if (Boxes.shift(Boxes.pos, .{ .x = 0, .y = 1 }))
+                                Boxes.pos.y += 1;
+                        }
+                    },
+                    else => {},
+                }
+            },
+            .Cards => {},
         }
     }
 
@@ -663,6 +843,69 @@ const MyApp = struct {
                             }
                         }
                     },
+                }
+            },
+            .Boxes => |Boxes| {
+                const field = win.child(.{
+                    .x_off = (win.width / 2) - (Boxes.field[0].len / 2),
+                    .y_off = (win.height / 2) - (Boxes.field.len / 2),
+                    .width = .{ .limit = Boxes.field[0].len + 2 },
+                    .height = .{ .limit = Boxes.field.len + 2 },
+                    .border = .{ .where = .all },
+                });
+                for (Boxes.field, 0..) |row, y| {
+                    for (row, 0..) |cell, x| {
+                        const text = if ((x == Boxes.pos.x) and (y == Boxes.pos.y)) blk: {
+                            break :blk "@";
+                        } else switch (cell) {
+                            .empty => " ",
+                            .box => "X",
+                        };
+                        field.writeCell(x, y, .{ .char = .{ .grapheme = text } });
+                    }
+                }
+            },
+            .Cards => |Cards| {
+                for (Cards.deck, 0..) |card, i| {
+                    const value = switch (card.value) {
+                        .A => "Ace",
+                        .@"2" => "2",
+                        .@"3" => "3",
+                        .@"4" => "4",
+                        .@"5" => "5",
+                        .@"6" => "6",
+                        .@"7" => "7",
+                        .@"8" => "8",
+                        .@"9" => "9",
+                        .@"10" => "10",
+                        .J => "Jack",
+                        .Q => "Queen",
+                        .K => "King",
+                    };
+                    const suit = switch (card.suit) {
+                        .spade => "Spades",
+                        .diamond => "Diamonds",
+                        .club => "Clubs",
+                        .heart => "Hearts",
+                    };
+                    _ = try win.printSegment(
+                        .{
+                            .text = value,
+                        },
+                        .{ .row_offset = 1 + i, .col_offset = 1 },
+                    );
+                    _ = try win.printSegment(
+                        .{
+                            .text = " of ",
+                        },
+                        .{ .row_offset = 1 + i, .col_offset = 1 + value.len },
+                    );
+                    _ = try win.printSegment(
+                        .{
+                            .text = suit,
+                        },
+                        .{ .row_offset = 1 + i, .col_offset = 5 + value.len },
+                    );
                 }
             },
         }
