@@ -194,10 +194,15 @@ const MyApp = struct {
         if (self.app.menu.active) {
             switch (event) {
                 .key_press => |key| {
+                    const len = @typeInfo(State).Enum.fields.len;
+                    const cp0 = 48; // codepoint of 0
+                    //
                     if (key.matchExact(vaxis.Key.tab, .{})) {
                         const int = @intFromEnum(self.app.menu.state);
-                        const len = @typeInfo(State).Enum.fields.len;
                         self.app.menu.state = @enumFromInt((int + 1) % len);
+                    }
+                    if ((key.codepoint > cp0) and (key.codepoint <= cp0 + len)) {
+                        self.app.menu.state = @enumFromInt(key.codepoint - cp0 - 1);
                     }
                     if (key.matches(vaxis.Key.enter, .{})) {
                         if ((self.app.state == .Tiles) and (self.app.menu.state != .Tiles))
