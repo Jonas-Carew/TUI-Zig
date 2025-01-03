@@ -384,7 +384,11 @@ const MyApp = struct {
                         switch (event) {
                             .key_press => |key| {
                                 if (key.matchExact(vaxis.Key.tab, .{})) {
-                                    menu.num = (menu.num + 1) % Battle.len;
+                                    menu.num = (menu.num + 1) % (Battle.len + 1);
+                                }
+                                if (key.matches(vaxis.Key.enter, .{})) {
+                                    if (menu.num == Battle.len)
+                                        Battle.state = .{ .main = .{} };
                                 }
                             },
                             else => {},
@@ -602,22 +606,32 @@ const MyApp = struct {
                             .height = .{ .limit = 5 },
                             .border = .{ .where = .all },
                         });
-                        _ = try select.printSegment(
-                            .{ .text = "Attack", .style = .{
-                                .reverse = true,
-                            } },
-                            .{
-                                .row_offset = 1,
-                                .col_offset = 2,
-                            },
-                        );
+                        const states = @typeInfo(BattleState).Enum.fields;
+                        inline for (0..states.len) |i| {
+                            const style = vaxis.Style{
+                                .reverse = (i == @intFromEnum(Battle.state)),
+                            };
+                            _ = try select.printSegment(
+                                .{
+                                    .text = states[i].name,
+                                    .style = style,
+                                },
+                                .{
+                                    .row_offset = 1 + ((i / 2) * 2),
+                                    .col_offset = switch (i % 2) {
+                                        0 => 3,
+                                        else => (select.width / 2),
+                                    },
+                                },
+                            );
+                        }
                     },
                     .attack => |menu| {
                         const select = win.child(.{
                             .x_off = 1,
-                            .y_off = win.height - 8,
+                            .y_off = win.height - 9,
                             .width = .{ .limit = win.width - 2 },
-                            .height = .{ .limit = 7 },
+                            .height = .{ .limit = 8 },
                             .border = .{ .where = .all },
                         });
                         var i: u4 = 0;
@@ -635,7 +649,18 @@ const MyApp = struct {
                                 },
                             );
                             i += 1;
-                            if (i >= Battle.len) break;
+                            if (i >= Battle.len) {
+                                _ = try select.printSegment(
+                                    .{ .text = "Back", .style = .{
+                                        .reverse = (i == menu.num),
+                                    } },
+                                    .{
+                                        .row_offset = select.height - 1,
+                                        .col_offset = select.width - 6,
+                                    },
+                                );
+                                break;
+                            }
                         }
                     },
                 }
