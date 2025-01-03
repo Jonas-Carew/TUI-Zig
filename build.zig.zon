@@ -1,5 +1,5 @@
 .{
-    .name = "libvaxis-starter",
+    .name = "Assorted-TUIs",
     .version = "0.0.0",
     .dependencies = .{
         .vaxis = .{
