@@ -32,6 +32,8 @@ const Event = union(enum) {
 
 const State = enum { Child, Tiles, Battle };
 
+const BattleState = enum { Attack };
+
 /// The application state
 const MyApp = struct {
     allocator: std.mem.Allocator,
@@ -86,12 +88,15 @@ const MyApp = struct {
 
                 state: union(enum) {
                     main: struct {
-                        state: enum { Attack } = .Attack,
+                        state: BattleState = .Attack,
                     },
-                    attack,
+                    attack: struct {
+                        num: u4 = 0,
+                    },
                 } = .{ .main = .{} },
 
                 attacks: [4]?Attack = .{ null, null, null, null },
+                len: u4 = 0,
             },
         } = .{ .Child = .{} },
     } = .{},
@@ -259,8 +264,9 @@ const MyApp = struct {
                                             .name = "Fireball",
                                             .damage = 50,
                                         };
+                                        Battle.len = 3;
                                     },
-                                    else => {},
+                                    else => unreachable,
                                 }
                             },
                         }
@@ -355,13 +361,18 @@ const MyApp = struct {
             },
             .Battle => |*Battle| {
                 switch (Battle.state) {
-                    .main => |menu| {
+                    .main => |*menu| {
                         switch (event) {
                             .key_press => |key| {
+                                const len = @typeInfo(BattleState).Enum.fields.len;
+                                if (key.matchExact(vaxis.Key.tab, .{})) {
+                                    const int = @intFromEnum(self.app.menu.state);
+                                    menu.state = @enumFromInt((int + 1) % len);
+                                }
                                 if (key.matches(vaxis.Key.enter, .{})) {
                                     switch (menu.state) {
                                         .Attack => {
-                                            Battle.state = .attack;
+                                            Battle.state = .{ .attack = .{} };
                                         },
                                     }
                                 }
@@ -369,7 +380,16 @@ const MyApp = struct {
                             else => {},
                         }
                     },
-                    .attack => {},
+                    .attack => |*menu| {
+                        switch (event) {
+                            .key_press => |key| {
+                                if (key.matchExact(vaxis.Key.tab, .{})) {
+                                    menu.num = (menu.num + 1) % Battle.len;
+                                }
+                            },
+                            else => {},
+                        }
+                    },
                 }
             },
         }
@@ -572,8 +592,53 @@ const MyApp = struct {
                 }
             },
 
-            .Battle => |*Battles| {
-                _ = Battles;
+            .Battle => |Battle| {
+                switch (Battle.state) {
+                    .main => {
+                        const select = win.child(.{
+                            .x_off = 1,
+                            .y_off = win.height - 6,
+                            .width = .{ .limit = win.width - 2 },
+                            .height = .{ .limit = 5 },
+                            .border = .{ .where = .all },
+                        });
+                        _ = try select.printSegment(
+                            .{ .text = "Attack", .style = .{
+                                .reverse = true,
+                            } },
+                            .{
+                                .row_offset = 1,
+                                .col_offset = 2,
+                            },
+                        );
+                    },
+                    .attack => |menu| {
+                        const select = win.child(.{
+                            .x_off = 1,
+                            .y_off = win.height - 8,
+                            .width = .{ .limit = win.width - 2 },
+                            .height = .{ .limit = 7 },
+                            .border = .{ .where = .all },
+                        });
+                        var i: u4 = 0;
+                        while (Battle.attacks[i]) |attack| {
+                            _ = try select.printSegment(
+                                .{ .text = attack.name, .style = .{
+                                    .reverse = (i == menu.num),
+                                } },
+                                .{
+                                    .row_offset = 1 + ((i / 2) * 2),
+                                    .col_offset = switch (i % 2) {
+                                        0 => 3,
+                                        else => (select.width / 2),
+                                    },
+                                },
+                            );
+                            i += 1;
+                            if (i >= Battle.len) break;
+                        }
+                    },
+                }
             },
         }
         // if we need to redraw, call draw again
