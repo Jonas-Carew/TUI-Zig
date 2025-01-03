@@ -79,12 +79,17 @@ const MyApp = struct {
             },
 
             Battle: struct {
-                pub const Attack = struct {
+                const Attack = struct {
                     name: []const u8,
                     damage: u32,
                 };
 
-                menuState: enum { main, attack } = .main,
+                state: union(enum) {
+                    main: struct {
+                        state: enum { Attack } = .Attack,
+                    },
+                    attack,
+                } = .{ .main = .{} },
 
                 attacks: [4]?Attack = .{ null, null, null, null },
             },
@@ -240,6 +245,23 @@ const MyApp = struct {
                             },
                             .Battle => {
                                 self.app.state = .{ .Battle = .{} };
+                                switch (self.app.state) {
+                                    .Battle => |*Battle| {
+                                        Battle.attacks[0] = .{
+                                            .name = "Slash",
+                                            .damage = 5,
+                                        };
+                                        Battle.attacks[1] = .{
+                                            .name = "Magic Missile",
+                                            .damage = 10,
+                                        };
+                                        Battle.attacks[2] = .{
+                                            .name = "Fireball",
+                                            .damage = 50,
+                                        };
+                                    },
+                                    else => {},
+                                }
                             },
                         }
                         self.app.menu.active = false;
@@ -331,8 +353,24 @@ const MyApp = struct {
                     .tiles => {},
                 }
             },
-            .Battle => |Battle| {
-                _ = Battle;
+            .Battle => |*Battle| {
+                switch (Battle.state) {
+                    .main => |menu| {
+                        switch (event) {
+                            .key_press => |key| {
+                                if (key.matches(vaxis.Key.enter, .{})) {
+                                    switch (menu.state) {
+                                        .Attack => {
+                                            Battle.state = .attack;
+                                        },
+                                    }
+                                }
+                            },
+                            else => {},
+                        }
+                    },
+                    .attack => {},
+                }
             },
         }
     }
