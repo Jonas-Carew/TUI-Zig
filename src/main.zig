@@ -44,6 +44,7 @@ const CardVal = enum { A, @"2", @"3", @"4", @"5", @"6", @"7", @"8", @"9", @"10",
 const Card = struct {
     suit: Suit,
     value: CardVal,
+    up: bool = false,
 };
 
 const sortedDeck = [52]Card{
@@ -211,19 +212,86 @@ const MyApp = struct {
                     try std.posix.getrandom(std.mem.asBytes(&seed));
                     var prng = std.rand.DefaultPrng.init(seed);
                     const rand = prng.random();
+
                     var newDeck: [52]Card = [1]Card{.{ .suit = .spade, .value = .A }} ** 52;
 
                     for (0..newDeck.len) |i| {
                         const end: usize = self.deck.len - i;
                         const pos = rand.int(usize) % end;
                         newDeck[i] = self.deck[pos];
-                        self.deck[pos] = self.deck[i];
+                        self.deck[pos] = self.deck[end - 1];
                     }
 
                     self.deck = newDeck;
+                    self.place = 0;
+                }
+
+                pub fn getCard(self: *@This()) !Card {
+                    if (self.place < 52) {
+                        defer self.place += 1;
+                        return self.deck[self.place];
+                    }
+                    return error.DeckEmpty;
+                }
+
+                pub fn pullStack(self: *@This()) !void {
+                    if (self.stack[0]) |card0| {
+                        if (!card0.up) {
+                            blk: {
+                                var iter: usize = 1;
+                                while (self.stack[iter]) |card| : (iter += 1) {
+                                    if (card.up) break;
+                                    if (iter == self.stack.len - 1) {
+                                        self.stack[iter].?.up = true;
+                                        break :blk;
+                                    }
+                                }
+                                self.stack[iter - 1].?.up = true;
+                            }
+                        } else return error.StackFullyDrawn;
+                    } else return error.StackEmpty;
+                }
+
+                pub fn flipStack(self: *@This()) void {
+                    for (self.stack, 0..) |card, i| {
+                        if (card) |_|
+                            self.stack[i].?.up = false;
+                    }
+                }
+
+                pub fn popStack(self: *@This()) !void {
+                    for (self.stack, 0..) |_card, bp| {
+                        if (_card) |card| {
+                            if (card.up) {
+                                for (bp..(self.stack.len - 1)) |i| {
+                                    self.stack[i] = self.stack[i + 1];
+                                }
+                                self.stack[self.stack.len - 1] = null;
+                                return;
+                            }
+                        } else return error.StackNotDrawn;
+                    }
+                    return error.StackNotDrawn;
                 }
 
                 deck: [52]Card = sortedDeck,
+                place: usize = 0,
+
+                field: [7][13]?Card = [_][13]?Card{[_]?Card{null} ** 13} ** 7,
+                // 19 for 6 unturned cards + a full stack K-A
+                acePiles: [4][19]?Card = [_][19]?Card{[_]?Card{null} ** 19} ** 4,
+                stack: [24]?Card = [_]?Card{null} ** 24,
+
+                select: union(enum) {
+                    stack,
+                    ace: u2,
+                    field,
+                } = .field,
+                pos: Pos = .{ .x = 0, .y = 0 },
+                move: Pos = .{ .x = 0, .y = 0 },
+                mode: enum { select, move } = .select,
+
+                card: ?Card = null,
             },
         } = .{ .Child = .{} },
     } = .{},
@@ -421,6 +489,15 @@ const MyApp = struct {
                                 switch (self.app.state) {
                                     .Cards => |*Cards| {
                                         try Cards.shuffle();
+                                        for (0..7) |col| {
+                                            for (0..(col + 1)) |row| {
+                                                Cards.field[col][row] = try Cards.getCard();
+                                            }
+                                            Cards.field[col][col].?.up = true;
+                                        }
+                                        for (0..Cards.stack.len) |i| {
+                                            Cards.stack[i] = try Cards.getCard();
+                                        }
                                     },
                                     else => unreachable,
                                 }
@@ -575,7 +652,333 @@ const MyApp = struct {
                     else => {},
                 }
             },
-            .Cards => {},
+            .Cards => |*Cards| {
+                switch (event) {
+                    .key_press => |key| {
+                        // pull cards from stack
+                        if (key.matches('p', .{}) and (Cards.mode == .select)) {
+                            if (Cards.stack[0]) |card0| {
+                                if (!card0.up) {
+                                    try Cards.pullStack();
+                                } else Cards.flipStack();
+                            }
+                        }
+                        // exit move mode
+                        if (key.matches(vaxis.Key.backspace, .{}) and (Cards.mode == .move)) {
+                            Cards.select = .field;
+                            Cards.pos = Cards.move;
+                            Cards.mode = .select;
+                            Cards.card = null;
+                        }
+                        // select the stack
+                        if (key.matches('s', .{}) and (Cards.mode == .select)) {
+                            // get the card on the stack
+                            for (Cards.stack) |_card| {
+                                if (_card) |card| {
+                                    // there is a card face up
+                                    if (card.up) {
+                                        Cards.card = card;
+                                        Cards.move = switch (Cards.select) {
+                                            .field, .ace => Cards.pos,
+                                            .stack => unreachable,
+                                        };
+                                        Cards.select = .stack;
+                                        Cards.mode = .move;
+                                        break;
+                                    }
+                                } else break;
+                            }
+                        }
+                        // ace key
+                        if (key.matches('a', .{})) {
+                            switch (Cards.mode) {
+                                // switch selection to and from ace piles
+                                .select => Cards.select = switch (Cards.select) {
+                                    .field => .{ .ace = 0 },
+                                    .ace => .field,
+                                    .stack => unreachable,
+                                },
+                                // test if card can be moved to ace piles
+                                .move => {
+                                    blk: {
+                                        const pile = @intFromEnum(Cards.card.?.suit);
+                                        // if the pile is empty
+                                        if (Cards.acePiles[pile][0] == null) {
+                                            if (Cards.card.?.value == .A) {
+                                                Cards.acePiles[pile][0] = Cards.card;
+                                                Cards.card = null;
+                                            }
+                                            break :blk;
+                                        }
+                                        // loop until iter is on a null
+                                        var iter: usize = 1;
+                                        while (Cards.acePiles[pile][iter]) |_| : (iter += 1) {
+                                            if (iter == Cards.acePiles[pile].len - 1) break :blk;
+                                        }
+                                        const val: CardVal = @enumFromInt(iter);
+                                        if (Cards.card.?.value == val) {
+                                            Cards.acePiles[pile][iter] = Cards.card;
+                                            Cards.card = null;
+                                        }
+                                    }
+                                    // successful move
+                                    if (Cards.card == null) {
+                                        switch (Cards.select) {
+                                            .field => {
+                                                // flip card
+                                                if (Cards.pos.y > 0) {
+                                                    Cards.field[Cards.pos.x][Cards.pos.y - 1].?.up = true;
+                                                }
+                                                Cards.field[Cards.pos.x][Cards.pos.y] = null;
+                                                // find a new position
+                                                if ((Cards.move.x == Cards.pos.x) and (Cards.move.y == Cards.pos.y)) {
+                                                    if (Cards.pos.y > 0) {
+                                                        Cards.pos.x = Cards.move.x;
+                                                        Cards.pos.y = Cards.move.y - 1;
+                                                    } else {
+                                                        // pos.y == 0
+                                                        for (0..Cards.field.len) |col| {
+                                                            if (Cards.field[col][0]) |_| {
+                                                                Cards.pos.x = col;
+                                                                break;
+                                                            }
+                                                        }
+                                                        // otherwise there are no cards
+                                                    }
+                                                } else Cards.pos = Cards.move;
+                                            },
+                                            .ace => {}, // move from ace to itself
+                                            .stack => {
+                                                try Cards.popStack();
+                                            },
+                                        }
+                                        Cards.select = .field;
+                                        Cards.mode = .select;
+                                    }
+                                },
+                            }
+                        }
+                        if (key.matches(vaxis.Key.enter, .{})) {
+                            switch (Cards.mode) {
+                                .select => {
+                                    switch (Cards.select) {
+                                        .field => blk: {
+                                            // selecting an unflipped card
+                                            if (Cards.field[Cards.pos.x][Cards.pos.y]) |card| {
+                                                if (card.up == false) break :blk;
+                                            } else {
+                                                // selecting a null card
+                                                break :blk;
+                                            }
+                                            //trying to select a buried card
+                                            for ((Cards.pos.y + 1)..Cards.field[0].len) |i| {
+                                                if (Cards.field[Cards.pos.x][i]) |card| {
+                                                    // buried under a king
+                                                    if (card.value == .K) break :blk;
+                                                    const value: CardVal = @enumFromInt(@intFromEnum(card.value) + 1);
+                                                    // numbers dont match
+                                                    if (Cards.field[Cards.pos.x][i - 1].?.value != value) break :blk;
+                                                } else break;
+                                            }
+                                            Cards.card = Cards.field[Cards.pos.x][Cards.pos.y];
+                                            Cards.mode = .move;
+                                            Cards.move = Cards.pos;
+                                        },
+                                        .ace => |pile| blk: {
+                                            // trying to select ace pile
+                                            if (Cards.acePiles[pile][0] == null) break :blk;
+                                            // loop until iter is on the first null
+                                            var iter: usize = 1;
+                                            while (Cards.acePiles[pile][iter]) |_| : (iter += 1) {
+                                                if (iter == Cards.acePiles[pile].len - 1) {
+                                                    iter += 1;
+                                                    break;
+                                                }
+                                            }
+                                            Cards.card = Cards.acePiles[pile][iter - 1];
+                                            Cards.mode = .move;
+                                            Cards.move = Cards.pos;
+                                        },
+                                        .stack => unreachable,
+                                    }
+                                },
+                                .move => blk: {
+                                    // trying to move onto the final card, must be impossible
+                                    if (Cards.move.y >= Cards.field[0].len - 1)
+                                        break :blk;
+                                    // trying to move onto a non-empty card
+                                    if (Cards.field[Cards.move.x][Cards.move.y + 1]) |_|
+                                        break :blk;
+                                    // moving onto an empty space
+                                    if ((Cards.move.y == 0) and (Cards.field[Cards.move.x][Cards.move.y] == null)) {
+                                        // not a king
+                                        if (Cards.card.?.value != .K)
+                                            break :blk;
+                                        // correct move
+                                        // move
+                                        switch (Cards.select) {
+                                            .field => {
+                                                // flip card
+                                                if (Cards.pos.y > 0)
+                                                    Cards.field[Cards.pos.x][Cards.pos.y - 1].?.up = true;
+                                                // move
+                                                while (Cards.field[Cards.pos.x][Cards.pos.y]) |to_move| : ({
+                                                    Cards.pos.y += 1;
+                                                    Cards.move.y += 1;
+                                                }) {
+                                                    Cards.field[Cards.move.x][Cards.move.y] = to_move;
+                                                    Cards.field[Cards.pos.x][Cards.pos.y] = null;
+                                                }
+                                                Cards.move.y -= 1;
+                                            },
+                                            .ace => |pile| {
+                                                if (Cards.acePiles[pile][12] != null) {
+                                                    Cards.field[Cards.move.x][Cards.move.y] = Cards.card;
+                                                    Cards.acePiles[pile][12] = null;
+                                                }
+                                            },
+                                            .stack => {
+                                                Cards.field[Cards.move.x][Cards.move.y] = Cards.card;
+                                                try Cards.popStack();
+                                            },
+                                        }
+
+                                        Cards.card = null;
+
+                                        // non empty space
+                                    } else {
+                                        // moving onto a card
+                                        const card: Card = Cards.field[Cards.move.x][Cards.move.y].?;
+                                        // trying to move onto same color
+                                        switch (Cards.card.?.suit) {
+                                            .club, .spade => if ((card.suit == .club) or (card.suit == .spade))
+                                                break :blk,
+                                            .diamond, .heart => if ((card.suit == .diamond) or (card.suit == .heart))
+                                                break :blk,
+                                        }
+                                        // trying to move onto an ace
+                                        if (card.value == .A)
+                                            break :blk;
+                                        // trying to move onto wrong number
+                                        const value: CardVal = @enumFromInt(@intFromEnum(card.value) - 1);
+                                        if (Cards.card.?.value != value)
+                                            break :blk;
+                                        // correct move
+                                        // move
+                                        switch (Cards.select) {
+                                            .field => {
+                                                // flip card under
+                                                if (Cards.pos.y > 0)
+                                                    Cards.field[Cards.pos.x][Cards.pos.y - 1].?.up = true;
+                                                // move card
+                                                Cards.move.y += 1;
+                                                while (Cards.field[Cards.pos.x][Cards.pos.y]) |to_move| : ({
+                                                    Cards.pos.y += 1;
+                                                    Cards.move.y += 1;
+                                                }) {
+                                                    Cards.field[Cards.move.x][Cards.move.y] = to_move;
+                                                    Cards.field[Cards.pos.x][Cards.pos.y] = null;
+                                                }
+                                                Cards.move.y -= 1;
+                                            },
+                                            .ace => |pile| {
+                                                Cards.field[Cards.move.x][Cards.move.y + 1] = Cards.card;
+                                                // set top card to null
+                                                for (Cards.acePiles[pile], 0..) |_ace, i| {
+                                                    if (_ace == null) {
+                                                        Cards.acePiles[pile][i - 1] = null;
+                                                    }
+                                                }
+                                            },
+                                            .stack => {
+                                                Cards.field[Cards.move.x][Cards.move.y + 1] = Cards.card;
+                                                try Cards.popStack();
+                                                Cards.move.y += 1;
+                                            },
+                                        }
+                                        Cards.card = null;
+                                    }
+                                    // set state (after any successful move)
+                                    Cards.select = .field;
+                                    Cards.pos = Cards.move;
+                                    Cards.mode = .select;
+                                },
+                            }
+                        }
+                        // movement detection
+                        switch (Cards.mode) {
+                            .select => {
+                                switch (Cards.select) {
+                                    .field => {
+                                        if (key.matches(vaxis.Key.up, .{})) blk: {
+                                            if (Cards.pos.y <= 0) break :blk;
+                                            if ((Cards.field[Cards.pos.x][Cards.pos.y - 1] == null) and
+                                                (Cards.pos.y - 1 != 0)) break :blk;
+                                            Cards.pos.y -= 1;
+                                        }
+                                        if (key.matches(vaxis.Key.down, .{})) blk: {
+                                            if (Cards.pos.y >= Cards.field[0].len) break :blk;
+                                            if ((Cards.field[Cards.pos.x][Cards.pos.y + 1] == null) and
+                                                (Cards.pos.y + 1 != 0)) break :blk;
+                                            Cards.pos.y += 1;
+                                        }
+                                        if (key.matches(vaxis.Key.left, .{})) blk: {
+                                            if (Cards.pos.x <= 0) break :blk;
+                                            if ((Cards.field[Cards.pos.x - 1][Cards.pos.y] == null) and
+                                                (Cards.pos.y != 0)) break :blk;
+                                            Cards.pos.x -= 1;
+                                        }
+                                        if (key.matches(vaxis.Key.right, .{})) blk: {
+                                            if (Cards.pos.x >= Cards.field.len) break :blk;
+                                            if ((Cards.field[Cards.pos.x + 1][Cards.pos.y] == null) and
+                                                (Cards.pos.y != 0)) break :blk;
+                                            Cards.pos.x += 1;
+                                        }
+                                    },
+                                    .ace => |pile| {
+                                        if (key.matches(vaxis.Key.left, .{})) blk: {
+                                            if (pile < 0) break :blk;
+                                            Cards.select = .{ .ace = pile - 1 };
+                                        }
+                                        if (key.matches(vaxis.Key.right, .{})) blk: {
+                                            if (pile >= Cards.acePiles.len) break :blk;
+                                            Cards.select = .{ .ace = pile + 1 };
+                                        }
+                                    },
+                                    .stack => unreachable,
+                                }
+                            },
+                            .move => {
+                                if (key.matches(vaxis.Key.up, .{})) blk: {
+                                    if (Cards.move.y <= 0) break :blk;
+                                    if ((Cards.field[Cards.move.x][Cards.move.y - 1] == null) and
+                                        (Cards.move.y - 1 != 0)) break :blk;
+                                    Cards.move.y -= 1;
+                                }
+                                if (key.matches(vaxis.Key.down, .{})) blk: {
+                                    if (Cards.move.y >= Cards.field[0].len) break :blk;
+                                    if ((Cards.field[Cards.move.x][Cards.move.y + 1] == null) and
+                                        (Cards.move.y + 1 != 0)) break :blk;
+                                    Cards.move.y += 1;
+                                }
+                                if (key.matches(vaxis.Key.left, .{})) blk: {
+                                    if (Cards.move.x <= 0) break :blk;
+                                    if ((Cards.field[Cards.move.x - 1][Cards.move.y] == null) and
+                                        (Cards.move.y != 0)) break :blk;
+                                    Cards.move.x -= 1;
+                                }
+                                if (key.matches(vaxis.Key.right, .{})) blk: {
+                                    if (Cards.move.x >= Cards.field.len) break :blk;
+                                    if ((Cards.field[Cards.move.x + 1][Cards.move.y] == null) and
+                                        (Cards.move.y != 0)) break :blk;
+                                    Cards.move.x += 1;
+                                }
+                            },
+                        }
+                    },
+                    else => {},
+                }
+            },
         }
     }
 
@@ -866,46 +1269,232 @@ const MyApp = struct {
                 }
             },
             .Cards => |Cards| {
-                for (Cards.deck, 0..) |card, i| {
-                    const value = switch (card.value) {
-                        .A => "Ace",
-                        .@"2" => "2",
-                        .@"3" => "3",
-                        .@"4" => "4",
-                        .@"5" => "5",
-                        .@"6" => "6",
-                        .@"7" => "7",
-                        .@"8" => "8",
-                        .@"9" => "9",
-                        .@"10" => "10",
-                        .J => "Jack",
-                        .Q => "Queen",
-                        .K => "King",
+                const getValue = struct {
+                    pub fn getValue(card: Card) []const u8 {
+                        return switch (card.value) {
+                            .A => "A",
+                            .@"2" => "2",
+                            .@"3" => "3",
+                            .@"4" => "4",
+                            .@"5" => "5",
+                            .@"6" => "6",
+                            .@"7" => "7",
+                            .@"8" => "8",
+                            .@"9" => "9",
+                            .@"10" => "10",
+                            .J => "J",
+                            .Q => "Q",
+                            .K => "K",
+                        };
+                    }
+                }.getValue;
+
+                const getSuit = struct {
+                    pub fn getSuit(card: Card) []const u8 {
+                        return switch (card.suit) {
+                            .spade => "S",
+                            .diamond => "D",
+                            .club => "C",
+                            .heart => "H",
+                        };
+                    }
+                }.getSuit;
+
+                const printEmpty = struct {
+                    pub fn printEmpty(window: vaxis.Window, r: usize, c: usize, style: vaxis.Style) void {
+                        _ = try window.printSegment(
+                            .{
+                                .text = "+──────+",
+                                .style = style,
+                            },
+                            .{ .row_offset = r, .col_offset = c },
+                        );
+                        for (1..5) |d| {
+                            _ = try window.printSegment(
+                                .{
+                                    .text = "│      │",
+                                    .style = style,
+                                },
+                                .{ .row_offset = r + d, .col_offset = c },
+                            );
+                        }
+                        _ = try window.printSegment(
+                            .{
+                                .text = "+──────+",
+                                .style = style,
+                            },
+                            .{ .row_offset = r + 5, .col_offset = c },
+                        );
+                    }
+                }.printEmpty;
+
+                const printTop = struct {
+                    pub fn printTop(window: vaxis.Window, r: usize, c: usize, card: Card, style: vaxis.Style) void {
+                        const value = getValue(card);
+                        const suit = getSuit(card);
+                        _ = try window.printSegment(
+                            .{
+                                .text = "╭──────╮",
+                                .style = style,
+                            },
+                            .{ .row_offset = r, .col_offset = c },
+                        );
+                        // card sides
+                        _ = try window.printSegment(
+                            .{
+                                .text = "│      │",
+                                .style = style,
+                            },
+                            .{ .row_offset = r + 1, .col_offset = c },
+                        );
+                        if (card.up) {
+                            // card value
+                            _ = try window.printSegment(
+                                .{
+                                    .text = value,
+                                    .style = style,
+                                },
+                                .{ .row_offset = r + 1, .col_offset = c + 2 },
+                            );
+                            // card suit
+                            _ = try window.printSegment(
+                                .{
+                                    .text = suit,
+                                    .style = style,
+                                },
+                                .{ .row_offset = r + 1, .col_offset = c + 5 },
+                            );
+                        } else {
+                            _ = try window.printSegment(
+                                .{
+                                    .text = "X    X",
+                                    .style = style,
+                                },
+                                .{ .row_offset = r + 1, .col_offset = c + 1 },
+                            );
+                        }
+                    }
+                }.printTop;
+
+                const printCard = struct {
+                    pub fn printCard(window: vaxis.Window, r: usize, c: usize, card: Card, style: vaxis.Style) void {
+                        printTop(window, r, c, card, style);
+                        for (2..5) |d| {
+                            _ = try window.printSegment(
+                                .{
+                                    .text = "│      │",
+                                    .style = style,
+                                },
+                                .{ .row_offset = r + d, .col_offset = c },
+                            );
+                        }
+                        _ = try window.printSegment(
+                            .{
+                                .text = "╰──────╯",
+                                .style = style,
+                            },
+                            .{ .row_offset = r + 5, .col_offset = c },
+                        );
+                    }
+                }.printCard;
+
+                // print the field
+                for (Cards.field, 0..) |col, i| {
+                    for (col, 0..) |_card, j| {
+                        if (_card) |card| {
+                            const style: vaxis.Style = if ((Cards.move.x == i) and (Cards.move.y == j) and
+                                (Cards.mode == .move)) .{
+                                .fg = .{ .rgb = [_]u8{ 255, 0, 255 } },
+                            } else if ((Cards.pos.x == i) and (Cards.pos.y == j) and
+                                (Cards.select == .field)) .{
+                                .fg = .{ .rgb = [_]u8{ 0, 255, 255 } },
+                            } else .{};
+                            printTop(win, 1 + (j * 2), 1 + (i * 9), card, style);
+                        } else {
+                            if (j == 0) {
+                                const style: vaxis.Style = if ((Cards.move.x == i) and (Cards.move.y == j) and
+                                    (Cards.mode == .move)) .{
+                                    .fg = .{ .rgb = [_]u8{ 255, 0, 255 } },
+                                } else if ((Cards.pos.x == i) and (Cards.pos.y == j) and
+                                    (Cards.select == .field)) .{
+                                    .fg = .{ .rgb = [_]u8{ 0, 255, 255 } },
+                                } else .{};
+                                printEmpty(win, 1, 1 + (i * 9), style);
+                            } else {
+                                const style: vaxis.Style = if ((Cards.move.x == i) and (Cards.move.y == j - 1) and
+                                    (Cards.mode == .move)) .{
+                                    .fg = .{ .rgb = [_]u8{ 255, 0, 255 } },
+                                } else if ((Cards.pos.x == i) and (Cards.pos.y == j - 1) and
+                                    (Cards.select == .field)) .{
+                                    .fg = .{ .rgb = [_]u8{ 0, 255, 255 } },
+                                } else .{};
+                                printCard(win, (j * 2) - 1, 1 + (i * 9), col[j - 1].?, style);
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                // print the stack
+                if (Cards.stack[0]) |card0| {
+                    // check for fully flipped stack
+                    const style: vaxis.Style = if (Cards.select == .stack) .{
+                        //.reverse = true,
+                        .fg = .{ .rgb = [_]u8{ 0, 255, 255 } },
+                    } else .{};
+                    if (card0.up) {
+                        printEmpty(win, win.height - 9, 3, .{});
+                        printCard(win, win.height - 9, 12, card0, style);
+                    } else {
+                        printCard(win, win.height - 9, 3, card0, .{});
+                        blk: {
+                            var iter: usize = 1;
+                            while (Cards.stack[iter]) |card| : (iter += 1) {
+                                // print most recently flipped card
+                                if (card.up) {
+                                    printCard(win, win.height - 9, 12, card, style);
+                                    break :blk;
+                                }
+                                if (iter == Cards.stack.len - 1) break;
+                            }
+                            // no cards were up
+                            printEmpty(win, win.height - 9, 12, .{});
+                        }
+                    }
+                    // loop over stack
+                } else {
+                    printEmpty(win, win.height - 9, 3, .{});
+                    printEmpty(win, win.height - 9, 12, .{});
+                }
+
+                // print the ace piles
+                for (Cards.acePiles, 0..) |pile, i| {
+                    const pos = 25 + (9 * i);
+                    // check for at least 1 card in pile
+                    const style: vaxis.Style = switch (Cards.select) {
+                        .ace => |n| if (n == i) .{
+                            //.reverse = true,
+                            .fg = .{ .rgb = [_]u8{ 0, 255, 255 } },
+                        } else .{},
+                        else => .{},
                     };
-                    const suit = switch (card.suit) {
-                        .spade => "Spades",
-                        .diamond => "Diamonds",
-                        .club => "Clubs",
-                        .heart => "Hearts",
-                    };
-                    _ = try win.printSegment(
-                        .{
-                            .text = value,
-                        },
-                        .{ .row_offset = 1 + i, .col_offset = 1 },
-                    );
-                    _ = try win.printSegment(
-                        .{
-                            .text = " of ",
-                        },
-                        .{ .row_offset = 1 + i, .col_offset = 1 + value.len },
-                    );
-                    _ = try win.printSegment(
-                        .{
-                            .text = suit,
-                        },
-                        .{ .row_offset = 1 + i, .col_offset = 5 + value.len },
-                    );
+                    if (pile[0]) |_| {
+                        // loop through the pile until iter is null
+                        blk: {
+                            var iter: usize = 1;
+                            while (pile[iter]) |card| : (iter += 1) {
+                                // if at the end of the pile
+                                if (iter == pile.len - 1) {
+                                    printCard(win, win.height - 9, pos, card, style);
+                                    break :blk;
+                                }
+                            }
+                            // iter is at null
+                            printCard(win, win.height - 9, pos, pile[iter - 1].?, style);
+                        }
+                    } else {
+                        printEmpty(win, win.height - 9, pos, style);
+                    }
                 }
             },
         }
