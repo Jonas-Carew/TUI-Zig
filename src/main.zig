@@ -46,6 +46,7 @@ const Card = struct {
     value: CardVal,
     up: bool = false,
 };
+const CardMenu = enum { symbols, pull3, start };
 
 const sortedDeck = [52]Card{
     Card{ .suit = .spade, .value = .A },
@@ -61,7 +62,7 @@ const sortedDeck = [52]Card{
     Card{ .suit = .spade, .value = .J },
     Card{ .suit = .spade, .value = .Q },
     Card{ .suit = .spade, .value = .K },
-    Card{ .suit = .spade, .value = .A },
+    Card{ .suit = .diamond, .value = .A },
     Card{ .suit = .diamond, .value = .@"2" },
     Card{ .suit = .diamond, .value = .@"3" },
     Card{ .suit = .diamond, .value = .@"4" },
@@ -213,7 +214,7 @@ const MyApp = struct {
                     var prng = std.rand.DefaultPrng.init(seed);
                     const rand = prng.random();
 
-                    var newDeck: [52]Card = [1]Card{.{ .suit = .spade, .value = .A }} ** 52;
+                    var newDeck: [52]Card = [1]Card{undefined} ** 52;
 
                     for (0..newDeck.len) |i| {
                         const end: usize = self.deck.len - i;
@@ -234,7 +235,7 @@ const MyApp = struct {
                     return error.DeckEmpty;
                 }
 
-                pub fn pullStack(self: *@This()) !void {
+                pub fn pullOne(self: *@This()) !void {
                     if (self.stack[0]) |card0| {
                         if (!card0.up) {
                             blk: {
@@ -250,6 +251,16 @@ const MyApp = struct {
                             }
                         } else return error.StackFullyDrawn;
                     } else return error.StackEmpty;
+                }
+
+                pub fn pullStack(self: *@This()) !void {
+                    const rep: usize = if (self.opts.pull3) 3 else 1;
+                    for (0..rep) |_| {
+                        self.pullOne() catch |err|
+                            if (rep == 0) return err;
+                        // return the first one - that is pulling an empty/drawn stack
+                        // dont return 2 or 3, that is a fine scenario
+                    }
                 }
 
                 pub fn flipStack(self: *@This()) void {
@@ -277,9 +288,9 @@ const MyApp = struct {
                 deck: [52]Card = sortedDeck,
                 place: usize = 0,
 
-                field: [7][13]?Card = [_][13]?Card{[_]?Card{null} ** 13} ** 7,
+                field: [7][19]?Card = [_][19]?Card{[_]?Card{null} ** 19} ** 7,
                 // 19 for 6 unturned cards + a full stack K-A
-                acePiles: [4][19]?Card = [_][19]?Card{[_]?Card{null} ** 19} ** 4,
+                acePiles: [4][13]?Card = [_][13]?Card{[_]?Card{null} ** 13} ** 4,
                 stack: [24]?Card = [_]?Card{null} ** 24,
 
                 select: union(enum) {
@@ -292,6 +303,16 @@ const MyApp = struct {
                 mode: enum { select, move } = .select,
 
                 card: ?Card = null,
+
+                win: bool = false,
+                numWins: u8 = 0,
+
+                opts: struct {
+                    menu: bool = true,
+                    select: CardMenu = .symbols,
+                    symbols: bool = false,
+                    pull3: bool = true,
+                } = .{},
             },
         } = .{ .Child = .{} },
     } = .{},
@@ -411,14 +432,17 @@ const MyApp = struct {
             switch (event) {
                 .key_press => |key| {
                     const len = @typeInfo(State).Enum.fields.len;
+                    const int = @intFromEnum(self.app.menu.state);
                     const cp0 = 48; // codepoint of 0
 
                     if (key.matches(vaxis.Key.escape, .{})) {
                         self.app.menu.active = false;
                         self.app.menu.state = self.app.state;
                     }
-                    if (key.matchExact(vaxis.Key.tab, .{})) {
-                        const int = @intFromEnum(self.app.menu.state);
+                    if (key.matches(vaxis.Key.up, .{}) and (int > 0)) {
+                        self.app.menu.state = @enumFromInt((int + len - 1) % len);
+                    }
+                    if (key.matches(vaxis.Key.down, .{}) and (int < len - 1)) {
                         self.app.menu.state = @enumFromInt((int + 1) % len);
                     }
                     if ((key.codepoint > cp0) and (key.codepoint <= cp0 + len)) {
@@ -652,7 +676,53 @@ const MyApp = struct {
                     else => {},
                 }
             },
-            .Cards => |*Cards| {
+            .Cards => |*Cards| case: {
+                if (Cards.opts.menu) {
+                    switch (event) {
+                        .key_press => |key| {
+                            const int = @intFromEnum(Cards.opts.select);
+                            const len = @typeInfo(@TypeOf(Cards.opts.select)).Enum.fields.len;
+                            if (key.matches(vaxis.Key.up, .{}) and (int > 0))
+                                Cards.opts.select = @enumFromInt(int - 1);
+                            if (key.matches(vaxis.Key.down, .{}) and (int < len - 1))
+                                Cards.opts.select = @enumFromInt(int + 1);
+                            if (key.matches(vaxis.Key.enter, .{})) switch (Cards.opts.select) {
+                                .symbols => Cards.opts.symbols = !Cards.opts.symbols,
+                                .pull3 => Cards.opts.pull3 = !Cards.opts.pull3,
+                                .start => Cards.opts.menu = false,
+                            };
+                        },
+                        else => {},
+                    }
+                    break :case;
+                }
+                if (Cards.win) {
+                    switch (event) {
+                        // reset state on key press
+                        .key_press => {
+                            // state that is kept
+                            const wins = Cards.numWins;
+                            const opts = Cards.opts;
+                            self.app.state = .{ .Cards = .{
+                                .numWins = wins,
+                                .opts = opts,
+                            } };
+                            // reset
+                            try Cards.shuffle();
+                            for (0..7) |col| {
+                                for (0..(col + 1)) |row| {
+                                    Cards.field[col][row] = try Cards.getCard();
+                                }
+                                Cards.field[col][col].?.up = true;
+                            }
+                            for (0..Cards.stack.len) |i| {
+                                Cards.stack[i] = try Cards.getCard();
+                            }
+                        },
+                        else => {},
+                    }
+                    break :case;
+                }
                 switch (event) {
                     .key_press => |key| {
                         // pull cards from stack
@@ -735,16 +805,8 @@ const MyApp = struct {
                                                     if (Cards.pos.y > 0) {
                                                         Cards.pos.x = Cards.move.x;
                                                         Cards.pos.y = Cards.move.y - 1;
-                                                    } else {
-                                                        // pos.y == 0
-                                                        for (0..Cards.field.len) |col| {
-                                                            if (Cards.field[col][0]) |_| {
-                                                                Cards.pos.x = col;
-                                                                break;
-                                                            }
-                                                        }
-                                                        // otherwise there are no cards
                                                     }
+                                                    // else we're at 0, hovering over an empty location
                                                 } else Cards.pos = Cards.move;
                                             },
                                             .ace => {}, // move from ace to itself
@@ -754,6 +816,15 @@ const MyApp = struct {
                                         }
                                         Cards.select = .field;
                                         Cards.mode = .select;
+                                    }
+                                    // check win!!!
+                                    if ((Cards.acePiles[0][12] != null) and
+                                        (Cards.acePiles[1][12] != null) and
+                                        (Cards.acePiles[2][12] != null) and
+                                        (Cards.acePiles[3][12] != null))
+                                    {
+                                        Cards.win = true; // Yippee!!!!!!!
+                                        Cards.numWins += 1;
                                     }
                                 },
                             }
@@ -917,7 +988,7 @@ const MyApp = struct {
                                             Cards.pos.y -= 1;
                                         }
                                         if (key.matches(vaxis.Key.down, .{})) blk: {
-                                            if (Cards.pos.y >= Cards.field[0].len) break :blk;
+                                            if (Cards.pos.y >= Cards.field[0].len - 1) break :blk;
                                             if ((Cards.field[Cards.pos.x][Cards.pos.y + 1] == null) and
                                                 (Cards.pos.y + 1 != 0)) break :blk;
                                             Cards.pos.y += 1;
@@ -929,19 +1000,23 @@ const MyApp = struct {
                                             Cards.pos.x -= 1;
                                         }
                                         if (key.matches(vaxis.Key.right, .{})) blk: {
-                                            if (Cards.pos.x >= Cards.field.len) break :blk;
+                                            if (Cards.pos.x >= Cards.field.len - 1) break :blk;
                                             if ((Cards.field[Cards.pos.x + 1][Cards.pos.y] == null) and
                                                 (Cards.pos.y != 0)) break :blk;
                                             Cards.pos.x += 1;
                                         }
+                                        if (key.matches('w', .{})) {
+                                            Cards.win = true;
+                                            Cards.numWins += 1;
+                                        }
                                     },
                                     .ace => |pile| {
                                         if (key.matches(vaxis.Key.left, .{})) blk: {
-                                            if (pile < 0) break :blk;
+                                            if (pile <= 0) break :blk;
                                             Cards.select = .{ .ace = pile - 1 };
                                         }
                                         if (key.matches(vaxis.Key.right, .{})) blk: {
-                                            if (pile >= Cards.acePiles.len) break :blk;
+                                            if (pile >= Cards.acePiles.len - 1) break :blk;
                                             Cards.select = .{ .ace = pile + 1 };
                                         }
                                     },
@@ -956,7 +1031,7 @@ const MyApp = struct {
                                     Cards.move.y -= 1;
                                 }
                                 if (key.matches(vaxis.Key.down, .{})) blk: {
-                                    if (Cards.move.y >= Cards.field[0].len) break :blk;
+                                    if (Cards.move.y >= Cards.field[0].len - 1) break :blk;
                                     if ((Cards.field[Cards.move.x][Cards.move.y + 1] == null) and
                                         (Cards.move.y + 1 != 0)) break :blk;
                                     Cards.move.y += 1;
@@ -968,7 +1043,7 @@ const MyApp = struct {
                                     Cards.move.x -= 1;
                                 }
                                 if (key.matches(vaxis.Key.right, .{})) blk: {
-                                    if (Cards.move.x >= Cards.field.len) break :blk;
+                                    if (Cards.move.x >= Cards.field.len - 1) break :blk;
                                     if ((Cards.field[Cards.move.x + 1][Cards.move.y] == null) and
                                         (Cards.move.y != 0)) break :blk;
                                     Cards.move.x += 1;
@@ -1268,7 +1343,128 @@ const MyApp = struct {
                     }
                 }
             },
-            .Cards => |Cards| {
+            .Cards => |Cards| case: {
+                if (Cards.opts.menu) {
+                    const fields = @typeInfo(State).Enum.fields;
+                    for (0..fields.len) |i| {
+                        const style = vaxis.Style{ .reverse = (i == @intFromEnum(Cards.opts.select)) };
+                        var flag: bool = false;
+                        const name = switch (i) {
+                            0 => blk: {
+                                flag = Cards.opts.symbols;
+                                break :blk "Use card symbols      :";
+                            },
+                            1 => blk: {
+                                flag = Cards.opts.pull3;
+                                break :blk "Pull 3 cards at a time:";
+                            },
+                            // Start Game
+                            2 => {
+                                _ = try win.printSegment(.{
+                                    .text = "[Start]",
+                                    .style = style,
+                                }, .{ .row_offset = 2 + (i * 2), .col_offset = 6 });
+                                break;
+                            },
+                            else => unreachable,
+                        };
+                        const opt = if (flag) "On" else "Off";
+                        _ = try win.printSegment(.{
+                            .text = name,
+                            .style = .{},
+                        }, .{ .row_offset = 1 + (i * 2), .col_offset = 1 });
+                        _ = try win.printSegment(.{
+                            .text = opt,
+                            .style = style,
+                        }, .{ .row_offset = 1 + (i * 2), .col_offset = 2 + name.len });
+                    }
+                    break :case;
+                }
+
+                if (Cards.win) {
+                    const msg = "You Won!";
+                    _ = try win.printSegment(
+                        .{
+                            .text = msg,
+                        },
+                        .{ .row_offset = win.height / 2, .col_offset = (win.width / 2) - (msg.len / 2) },
+                    );
+                    break :case;
+                }
+
+                // print wins
+                if (Cards.numWins > 0) {
+                    const msg = "Consecutive Wins: ";
+                    const num: []const u8 = &[_]u8{
+                        ('0' + (Cards.numWins % 10)),
+                        ('0' + ((Cards.numWins / 10) % 10)),
+                        ('0' + ((Cards.numWins / 100) % 10)),
+                    };
+                    _ = num;
+                    const n = switch (Cards.numWins) {
+                        0 => unreachable,
+                        1 => "1",
+                        2 => "2",
+                        else => "3",
+                    };
+                    _ = try win.printSegment(
+                        .{
+                            .text = msg,
+                            .style = .{ .reverse = true },
+                        },
+                        .{ .row_offset = win.height - 11, .col_offset = 1 },
+                    );
+                    _ = try win.printSegment(
+                        .{
+                            .text = n,
+                            .style = .{ .reverse = true },
+                        },
+                        .{ .row_offset = win.height - 11, .col_offset = 1 + msg.len },
+                    );
+                } else {
+                    // if there are no wins
+                    // print the actions
+                    var title: []const u8 = undefined;
+                    var msgs: []const []const u8 = undefined;
+                    switch (Cards.mode) {
+                        .select => {
+                            title = "Select Mode Actions";
+                            msgs = &[_][]const u8{
+                                "Use the arrow keys to move",
+                                "[P]ull the top card(s) off the draw pile",
+                                "[A]ccess the ace piles",
+                                "[S]elect the top card of the draw pile",
+                                "[Enter] Select the current card",
+                            };
+                        },
+                        .move => {
+                            title = "Move Mode Actions";
+                            msgs = &[_][]const u8{
+                                "Use the arrow keys to move",
+                                "[A]ttempt to place the selected card on the ace piles",
+                                "[Enter] Move the selected card to the current card",
+                                "[Backspace] Exit move mode",
+                            };
+                        },
+                    }
+                    const offset = 11 + msgs.len;
+                    _ = try win.printSegment(
+                        .{
+                            .text = title,
+                            .style = .{ .ul_style = .single },
+                        },
+                        .{ .row_offset = win.height - offset, .col_offset = 1 },
+                    );
+                    for (0..msgs.len) |i| {
+                        _ = try win.printSegment(
+                            .{
+                                .text = msgs[i],
+                            },
+                            .{ .row_offset = win.height + 1 + i - offset, .col_offset = 2 },
+                        );
+                    }
+                }
+
                 const getValue = struct {
                     pub fn getValue(card: Card) []const u8 {
                         return switch (card.value) {
@@ -1290,8 +1486,15 @@ const MyApp = struct {
                 }.getValue;
 
                 const getSuit = struct {
-                    pub fn getSuit(card: Card) []const u8 {
-                        return switch (card.suit) {
+                    pub fn getSuit(symbols: bool, card: Card) []const u8 {
+                        return if (symbols)
+                            switch (card.suit) {
+                                .spade => "󰣑",
+                                .diamond => "󰣏",
+                                .club => "󰣎",
+                                .heart => "󰋑",
+                            }
+                        else switch (card.suit) {
                             .spade => "S",
                             .diamond => "D",
                             .club => "C",
@@ -1329,9 +1532,16 @@ const MyApp = struct {
                 }.printEmpty;
 
                 const printTop = struct {
-                    pub fn printTop(window: vaxis.Window, r: usize, c: usize, card: Card, style: vaxis.Style) void {
+                    pub fn printTop(
+                        window: vaxis.Window,
+                        r: usize,
+                        c: usize,
+                        card: Card,
+                        style: vaxis.Style,
+                        symbols: bool,
+                    ) void {
                         const value = getValue(card);
-                        const suit = getSuit(card);
+                        const suit = getSuit(symbols, card);
                         _ = try window.printSegment(
                             .{
                                 .text = "╭──────╮",
@@ -1367,7 +1577,7 @@ const MyApp = struct {
                         } else {
                             _ = try window.printSegment(
                                 .{
-                                    .text = "X    X",
+                                    .text = "      ",
                                     .style = style,
                                 },
                                 .{ .row_offset = r + 1, .col_offset = c + 1 },
@@ -1377,8 +1587,15 @@ const MyApp = struct {
                 }.printTop;
 
                 const printCard = struct {
-                    pub fn printCard(window: vaxis.Window, r: usize, c: usize, card: Card, style: vaxis.Style) void {
-                        printTop(window, r, c, card, style);
+                    pub fn printCard(
+                        window: vaxis.Window,
+                        r: usize,
+                        c: usize,
+                        card: Card,
+                        style: vaxis.Style,
+                        symbols: bool,
+                    ) void {
+                        printTop(window, r, c, card, style, symbols);
                         for (2..5) |d| {
                             _ = try window.printSegment(
                                 .{
@@ -1398,6 +1615,8 @@ const MyApp = struct {
                     }
                 }.printCard;
 
+                const symbols = Cards.opts.symbols;
+
                 // print the field
                 for (Cards.field, 0..) |col, i| {
                     for (col, 0..) |_card, j| {
@@ -1409,7 +1628,7 @@ const MyApp = struct {
                                 (Cards.select == .field)) .{
                                 .fg = .{ .rgb = [_]u8{ 0, 255, 255 } },
                             } else .{};
-                            printTop(win, 1 + (j * 2), 1 + (i * 9), card, style);
+                            printTop(win, 1 + (j * 2), 1 + (i * 9), card, style, symbols);
                         } else {
                             if (j == 0) {
                                 const style: vaxis.Style = if ((Cards.move.x == i) and (Cards.move.y == j) and
@@ -1428,7 +1647,7 @@ const MyApp = struct {
                                     (Cards.select == .field)) .{
                                     .fg = .{ .rgb = [_]u8{ 0, 255, 255 } },
                                 } else .{};
-                                printCard(win, (j * 2) - 1, 1 + (i * 9), col[j - 1].?, style);
+                                printCard(win, (j * 2) - 1, 1 + (i * 9), col[j - 1].?, style, symbols);
                             }
                             break;
                         }
@@ -1444,15 +1663,15 @@ const MyApp = struct {
                     } else .{};
                     if (card0.up) {
                         printEmpty(win, win.height - 9, 3, .{});
-                        printCard(win, win.height - 9, 12, card0, style);
+                        printCard(win, win.height - 9, 12, card0, style, symbols);
                     } else {
-                        printCard(win, win.height - 9, 3, card0, .{});
+                        printCard(win, win.height - 9, 3, card0, .{}, symbols);
                         blk: {
                             var iter: usize = 1;
                             while (Cards.stack[iter]) |card| : (iter += 1) {
                                 // print most recently flipped card
                                 if (card.up) {
-                                    printCard(win, win.height - 9, 12, card, style);
+                                    printCard(win, win.height - 9, 12, card, style, symbols);
                                     break :blk;
                                 }
                                 if (iter == Cards.stack.len - 1) break;
@@ -1485,12 +1704,12 @@ const MyApp = struct {
                             while (pile[iter]) |card| : (iter += 1) {
                                 // if at the end of the pile
                                 if (iter == pile.len - 1) {
-                                    printCard(win, win.height - 9, pos, card, style);
+                                    printCard(win, win.height - 9, pos, card, style, symbols);
                                     break :blk;
                                 }
                             }
                             // iter is at null
-                            printCard(win, win.height - 9, pos, pile[iter - 1].?, style);
+                            printCard(win, win.height - 9, pos, pile[iter - 1].?, style, symbols);
                         }
                     } else {
                         printEmpty(win, win.height - 9, pos, style);
