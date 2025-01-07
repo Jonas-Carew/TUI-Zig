@@ -48,61 +48,6 @@ const Card = struct {
 };
 const CardMenu = enum { symbols, pull3, start };
 
-const sortedDeck = [52]Card{
-    Card{ .suit = .spade, .value = .A },
-    Card{ .suit = .spade, .value = .@"2" },
-    Card{ .suit = .spade, .value = .@"3" },
-    Card{ .suit = .spade, .value = .@"4" },
-    Card{ .suit = .spade, .value = .@"5" },
-    Card{ .suit = .spade, .value = .@"6" },
-    Card{ .suit = .spade, .value = .@"7" },
-    Card{ .suit = .spade, .value = .@"8" },
-    Card{ .suit = .spade, .value = .@"9" },
-    Card{ .suit = .spade, .value = .@"10" },
-    Card{ .suit = .spade, .value = .J },
-    Card{ .suit = .spade, .value = .Q },
-    Card{ .suit = .spade, .value = .K },
-    Card{ .suit = .diamond, .value = .A },
-    Card{ .suit = .diamond, .value = .@"2" },
-    Card{ .suit = .diamond, .value = .@"3" },
-    Card{ .suit = .diamond, .value = .@"4" },
-    Card{ .suit = .diamond, .value = .@"5" },
-    Card{ .suit = .diamond, .value = .@"6" },
-    Card{ .suit = .diamond, .value = .@"7" },
-    Card{ .suit = .diamond, .value = .@"8" },
-    Card{ .suit = .diamond, .value = .@"9" },
-    Card{ .suit = .diamond, .value = .@"10" },
-    Card{ .suit = .diamond, .value = .J },
-    Card{ .suit = .diamond, .value = .Q },
-    Card{ .suit = .diamond, .value = .K },
-    Card{ .suit = .club, .value = .K },
-    Card{ .suit = .club, .value = .Q },
-    Card{ .suit = .club, .value = .J },
-    Card{ .suit = .club, .value = .@"10" },
-    Card{ .suit = .club, .value = .@"9" },
-    Card{ .suit = .club, .value = .@"8" },
-    Card{ .suit = .club, .value = .@"7" },
-    Card{ .suit = .club, .value = .@"6" },
-    Card{ .suit = .club, .value = .@"5" },
-    Card{ .suit = .club, .value = .@"4" },
-    Card{ .suit = .club, .value = .@"3" },
-    Card{ .suit = .club, .value = .@"2" },
-    Card{ .suit = .club, .value = .A },
-    Card{ .suit = .heart, .value = .K },
-    Card{ .suit = .heart, .value = .Q },
-    Card{ .suit = .heart, .value = .J },
-    Card{ .suit = .heart, .value = .@"10" },
-    Card{ .suit = .heart, .value = .@"9" },
-    Card{ .suit = .heart, .value = .@"8" },
-    Card{ .suit = .heart, .value = .@"7" },
-    Card{ .suit = .heart, .value = .@"6" },
-    Card{ .suit = .heart, .value = .@"5" },
-    Card{ .suit = .heart, .value = .@"4" },
-    Card{ .suit = .heart, .value = .@"3" },
-    Card{ .suit = .heart, .value = .@"2" },
-    Card{ .suit = .heart, .value = .A },
-};
-
 /// The application state
 const MyApp = struct {
     allocator: std.mem.Allocator,
@@ -209,6 +154,13 @@ const MyApp = struct {
 
             Cards: struct {
                 pub fn shuffle(self: *@This()) !void {
+                    for (0..self.deck.len) |i| {
+                        self.deck[i] = Card{
+                            .suit = @enumFromInt(i % 4),
+                            .value = @enumFromInt(i % 13),
+                        };
+                    }
+
                     var seed: u64 = 0;
                     try std.posix.getrandom(std.mem.asBytes(&seed));
                     var prng = std.rand.DefaultPrng.init(seed);
@@ -285,7 +237,7 @@ const MyApp = struct {
                     return error.StackNotDrawn;
                 }
 
-                deck: [52]Card = sortedDeck,
+                deck: [52]Card = [1]Card{undefined} ** 52,
                 place: usize = 0,
 
                 field: [7][19]?Card = [_][19]?Card{[_]?Card{null} ** 19} ** 7,
@@ -306,6 +258,7 @@ const MyApp = struct {
 
                 win: bool = false,
                 numWins: u8 = 0,
+                winStr: []u8 = "",
 
                 opts: struct {
                     menu: bool = true,
@@ -1395,17 +1348,20 @@ const MyApp = struct {
                 // print wins
                 if (Cards.numWins > 0) {
                     const msg = "Consecutive Wins: ";
-                    const num: []const u8 = &[_]u8{
-                        ('0' + (Cards.numWins % 10)),
-                        ('0' + ((Cards.numWins / 10) % 10)),
-                        ('0' + ((Cards.numWins / 100) % 10)),
-                    };
-                    _ = num;
+                    //var buf: [3]u8 = undefined;
+                    //Cards.winStr = std.fmt.bufPrint(&buf, "{d}", .{Cards.numWins}) catch @panic("Win Num Panic");
                     const n = switch (Cards.numWins) {
                         0 => unreachable,
                         1 => "1",
                         2 => "2",
-                        else => "3",
+                        3 => "3",
+                        4 => "4",
+                        5 => "5",
+                        6 => "6",
+                        7 => "7",
+                        8 => "8",
+                        9 => "9",
+                        else => "10+",
                     };
                     _ = try win.printSegment(
                         .{
