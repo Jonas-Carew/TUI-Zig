@@ -1,10 +1,11 @@
 .{
-    .name = "Assorted-TUIs",
+    .name = .Assorted_TUIs,
+    .fingerprint = 0xbbdf94ee2b5ca513,
     .version = "0.0.0",
     .dependencies = .{
         .vaxis = .{
-            .url = "https://github.com/rockorager/libvaxis/archive/refs/tags/v0.5.1.tar.gz",
-            .hash = "1220de23a3240e503397ea579de4fd85db422f537e10036ef74717c50164475813ce",
+            .url = "git+https://github.com/rockorager/libvaxis.git#84d6cb381c0d628550fac3f6daa24c5faf7b2cd1",
+            .hash = "vaxis-0.1.0-BWNV_O8OCQBC4w-MnOGaKw9zFVFgTxf3XfcvgScUagEJ",
         },
     },
     .paths = .{

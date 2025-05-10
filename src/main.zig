@@ -32,13 +32,26 @@ const Event = union(enum) {
 
 const State = enum { Child, Tiles, Battle, Boxes, Cards };
 
-const BattleState = enum { Attack };
 const Cell = enum { empty, box };
 const Pos = struct {
     x: usize,
     y: usize,
     inv: bool = false, // handles negative values, only for shift
 };
+
+const Move = struct {
+	name: []const u8,
+	speed: u32,
+	damage: ?u32,
+	block: ?u32,
+};
+
+const Fighter = struct {
+	name: []const u8,
+	health: u32,
+	moveList: []const Move,
+};
+
 const Suit = enum { heart, diamond, spade, club };
 const CardVal = enum { A, @"2", @"3", @"4", @"5", @"6", @"7", @"8", @"9", @"10", J, Q, K };
 const Card = struct {
@@ -94,23 +107,34 @@ const MyApp = struct {
                 colors: ?[][]vaxis.Color = null,
             },
 
+			// Battle State
             Battle: struct {
-                const Attack = struct {
-                    name: []const u8,
-                    damage: u32,
-                };
-
+	            // The fighter
+	            fighter: ?Fighter = null,
+	            // The battle menus
                 state: union(enum) {
-                    main: struct {
-                        state: BattleState = .Attack,
+	                // fighter selection menu
+	                ftrMenu: struct {
+		                uni: ?vaxis.Unicode = null,
+		                input: ?vaxis.widgets.TextInput = null,
+			            ftrName: ?[]const u8 = null,
+			            ftrFile: ?std.fs.File = null,
+	                },
+	                // main menu
+                    mainMenu: struct {
+	                    selection: enum {
+		                    Attack,
+	                    } = .Attack,
                     },
-                    attack: struct {
-                        num: u4 = 0,
+                    // move selection menu
+                    moveMenu: struct {
+	                    selection: u8 = 0,
+	                },
+                    // brief mesage
+                    messageMenu: struct {
+	                    msg: []const u8,
                     },
-                } = .{ .main = .{} },
-
-                attacks: [4]?Attack = .{ null, null, null, null },
-                len: u4 = 0,
+                } = .{ .ftrMenu = .{} },
             },
 
             Boxes: struct {
@@ -163,7 +187,7 @@ const MyApp = struct {
 
                     var seed: u64 = 0;
                     try std.posix.getrandom(std.mem.asBytes(&seed));
-                    var prng = std.rand.DefaultPrng.init(seed);
+                    var prng = std.Random.DefaultPrng.init(seed);
                     const rand = prng.random();
 
                     var newDeck: [52]Card = [1]Card{undefined} ** 52;
@@ -311,6 +335,23 @@ const MyApp = struct {
         }
     }
 
+    pub fn debattle(self: *MyApp) void {
+	    switch (self.app.state) {
+		    .Battle => |*Battle| {
+			    switch (Battle.state) {
+				    .ftrMenu => |*ftrMenu| {
+					    if (ftrMenu.input) |*input| input.deinit();
+					    if (ftrMenu.uni) |uni| uni.deinit();
+				    }
+			    }
+			    if (Battle.fighter) {
+				    // DEALLOC FIGHTER
+			    }
+		    },
+		    else => unreachable,
+	    }
+    }
+
     pub fn run(self: *MyApp) !void {
         // Initialize our event loop. This particular loop requires intrusive init
         var loop: vaxis.Loop(Event) = .{
@@ -384,7 +425,7 @@ const MyApp = struct {
         } else {
             switch (event) {
                 .key_press => |key| {
-                    const len = @typeInfo(State).Enum.fields.len;
+                    const len = @typeInfo(State).@"enum".fields.len;
                     const int = @intFromEnum(self.app.menu.state);
                     const cp0 = 48; // codepoint of 0
 
@@ -424,19 +465,16 @@ const MyApp = struct {
                                 self.app.state = .{ .Battle = .{} };
                                 switch (self.app.state) {
                                     .Battle => |*Battle| {
-                                        Battle.attacks[0] = .{
-                                            .name = "Slash",
-                                            .damage = 5,
-                                        };
-                                        Battle.attacks[1] = .{
-                                            .name = "Magic Missile",
-                                            .damage = 10,
-                                        };
-                                        Battle.attacks[2] = .{
-                                            .name = "Fireball",
-                                            .damage = 50,
-                                        };
-                                        Battle.len = 3;
+	                                    switch (Battle.state) {
+		                                    .ftrMenu => |*ftrMenu| {
+		                                        ftrMenu.uni = try vaxis.Unicode.init(self.allocator);
+		                                        ftrMenu.input = vaxis.widgets.TextInput.init(
+		                                            self.allocator,
+		                                            &ftrMenu.uni.?,
+		                                        );
+		                                    },
+		                                    else => unreachable,
+	                                    }
                                     },
                                     else => unreachable,
                                 }
@@ -521,8 +559,14 @@ const MyApp = struct {
                                                 u8,
                                                 Tiles.height_text.?,
                                                 10,
-                                            ) catch break :enter;
+                                            ) catch {
+	                                            self.allocator.free(Tiles.height_text.?);
+	                                            Tiles.height_text = null;
+	                                            break :enter;
+                                            };
                                             if ((Tiles.height.? <= 0) or (Tiles.height.? > 10)) {
+	                                            self.allocator.free(Tiles.height_text.?);
+	                                            Tiles.height_text = null;
                                                 Tiles.height = null;
                                             }
                                         } else if (Tiles.width == null) {
@@ -531,8 +575,14 @@ const MyApp = struct {
                                                 u8,
                                                 Tiles.width_text.?,
                                                 10,
-                                            ) catch break :enter;
+                                            ) catch {
+	                                            self.allocator.free(Tiles.width_text.?);
+	                                            Tiles.width_text = null;
+	                                            break :enter;
+                                            };
                                             if ((Tiles.width.? <= 0) or (Tiles.width.? > 10)) {
+	                                            self.allocator.free(Tiles.width_text.?);
+	                                            Tiles.width_text = null;
                                                 Tiles.width = null;
                                             }
 
@@ -540,7 +590,7 @@ const MyApp = struct {
                                             if (Tiles.width != null) {
                                                 var seed: u64 = 0;
                                                 try std.posix.getrandom(std.mem.asBytes(&seed));
-                                                var prng = std.rand.DefaultPrng.init(seed);
+                                                var prng = std.Random.DefaultPrng.init(seed);
                                                 const rand = prng.random();
 
                                                 Tiles.colors =
@@ -571,38 +621,30 @@ const MyApp = struct {
             },
             .Battle => |*Battle| {
                 switch (Battle.state) {
-                    .main => |*menu| {
+	                .ftrMenu => |*ftrMenu| {
                         switch (event) {
                             .key_press => |key| {
-                                const len = @typeInfo(BattleState).Enum.fields.len;
-                                if (key.matchExact(vaxis.Key.tab, .{})) {
-                                    const int = @intFromEnum(self.app.menu.state);
-                                    menu.state = @enumFromInt((int + 1) % len);
-                                }
                                 if (key.matches(vaxis.Key.enter, .{})) {
-                                    switch (menu.state) {
-                                        .Attack => {
-                                            Battle.state = .{ .attack = .{} };
-                                        },
+                                    enter: {
+	                                    if (ftrMenu.ftrFile == null) {
+		                                    ftrMenu.ftrName = try ftrMenu.input.?.toOwnedSlice();
+		                                    ftrMenu.ftrFile = std.fs.cwd().openFile(ftrMenu.ftrName.?, .{}) catch {
+			                                    self.allocator.free(ftrMenu.ftrName.?);
+			                                    break :enter;
+			                                };
+		                                    // MAKE FIGHTER
+	                                    }
                                     }
-                                }
+                                } else try ftrMenu.input.?.update(.{ .key_press = key });
                             },
                             else => {},
                         }
+	                },
+                    .mainMenu => {
                     },
-                    .attack => |*menu| {
-                        switch (event) {
-                            .key_press => |key| {
-                                if (key.matchExact(vaxis.Key.tab, .{})) {
-                                    menu.num = (menu.num + 1) % (Battle.len + 1);
-                                }
-                                if (key.matches(vaxis.Key.enter, .{})) {
-                                    if (menu.num == Battle.len)
-                                        Battle.state = .{ .main = .{} };
-                                }
-                            },
-                            else => {},
-                        }
+                    .moveMenu => {
+                    },
+                    .messageMenu => {
                     },
                 }
             },
@@ -634,7 +676,7 @@ const MyApp = struct {
                     switch (event) {
                         .key_press => |key| {
                             const int = @intFromEnum(Cards.opts.select);
-                            const len = @typeInfo(@TypeOf(Cards.opts.select)).Enum.fields.len;
+                            const len = @typeInfo(@TypeOf(Cards.opts.select)).@"enum".fields.len;
                             if (key.matches(vaxis.Key.up, .{}) and (int > 0))
                                 Cards.opts.select = @enumFromInt(int - 1);
                             if (key.matches(vaxis.Key.down, .{}) and (int < len - 1))
@@ -958,10 +1000,6 @@ const MyApp = struct {
                                                 (Cards.pos.y != 0)) break :blk;
                                             Cards.pos.x += 1;
                                         }
-                                        if (key.matches('w', .{})) {
-                                            Cards.win = true;
-                                            Cards.numWins += 1;
-                                        }
                                     },
                                     .ace => |pile| {
                                         if (key.matches(vaxis.Key.left, .{})) blk: {
@@ -1030,17 +1068,17 @@ const MyApp = struct {
         self.vx.setMouseShape(.default);
 
         if (self.app.menu.active) {
-            const states = @typeInfo(State).Enum.fields;
+            const states = @typeInfo(State).@"enum".fields;
 
             const menu = win.child(.{
                 .x_off = 1,
                 .y_off = 1,
-                .width = .{ .limit = win.width - 2 },
-                .height = .{ .limit = (states.len * 2) + 1 },
+                .width = win.width - 2,
+                .height = (states.len * 2) + 1,
             });
 
             const msg = "Select the app to run";
-            _ = try menu.printSegment(.{ .text = msg }, .{});
+            _ = menu.printSegment(.{ .text = msg }, .{});
 
             inline for (0..states.len) |i| {
                 const style = vaxis.Style{
@@ -1048,11 +1086,11 @@ const MyApp = struct {
                 };
                 const num = [1]u8{'1' + i};
                 const text = "[" ++ num ++ "]";
-                _ = try menu.printSegment(.{
+                _ = menu.printSegment(.{
                     .text = text,
                     .style = .{},
                 }, .{ .row_offset = 2 * (i + 1) });
-                _ = try menu.printSegment(.{
+                _ = menu.printSegment(.{
                     .text = states[i].name,
                     .style = style,
                 }, .{ .row_offset = 2 * (i + 1), .col_offset = 4 });
@@ -1067,10 +1105,10 @@ const MyApp = struct {
                 };
 
                 const child_win = win.child(.{
-                    .x_off = (win.width / 2) - (msg.len / 2),
+                    .x_off = @intCast((win.width / 2) - (msg.len / 2)),
                     .y_off = win.height / 2 + 1,
-                    .width = .{ .limit = msg.len },
-                    .height = .{ .limit = 1 },
+                    .width = @intCast(msg.len),
+                    .height = 1,
                 });
 
                 // mouse events are much easier to handle in the draw cycle. Windows have a helper method to
@@ -1137,7 +1175,7 @@ const MyApp = struct {
                 // Print a text segment to the screen. This is a helper function which iterates over the
                 // text field for graphemes. Alternatively, you can implement your own print functions and
                 // use the writeCell API.
-                _ = try child_win.printSegment(.{ .text = msg, .style = style }, .{});
+                _ = child_win.printSegment(.{ .text = msg, .style = style }, .{});
             },
 
             .Tiles => |*Tiles| {
@@ -1146,35 +1184,35 @@ const MyApp = struct {
                         const select = win.child(.{
                             .x_off = 1,
                             .y_off = 1,
-                            .width = .{ .limit = win.width - 2 },
-                            .height = .{ .limit = 2 },
+                            .width = win.width - 2,
+                            .height = 2,
                         });
 
                         const hMsg = "Input a height (1-10): ";
                         const hWin = select.child(.{
                             .x_off = hMsg.len,
                             .y_off = 0,
-                            .width = .{ .limit = select.width - hMsg.len },
-                            .height = .{ .limit = 1 },
+                            .width = @intCast(select.width - hMsg.len),
+                            .height = 1,
                         });
 
                         const wMsg = "Input a width (1-10): ";
                         const wWin = select.child(.{
                             .x_off = wMsg.len,
                             .y_off = 1,
-                            .width = .{ .limit = select.width - wMsg.len },
-                            .height = .{ .limit = 1 },
+                            .width = @intCast(select.width - wMsg.len),
+                            .height = 1,
                         });
 
-                        _ = try select.printSegment(.{ .text = hMsg }, .{});
+                        _ = select.printSegment(.{ .text = hMsg }, .{});
                         select.setCursorShape(.underline_blink);
                         select.showCursor(hMsg.len, 0);
 
                         // kinda backwards...it starts with no height (else)
                         //  and then goes to the if block
                         if (Tiles.height) |_| {
-                            _ = try hWin.printSegment(.{ .text = Tiles.height_text.? }, .{});
-                            _ = try select.printSegment(
+                            _ = hWin.printSegment(.{ .text = Tiles.height_text.? }, .{});
+                            _ = select.printSegment(
                                 .{ .text = wMsg },
                                 .{ .row_offset = 1 },
                             );
@@ -1198,7 +1236,7 @@ const MyApp = struct {
                                 };
                                 for (((h * win.height) / height)..(((h + 1) * win.height) / height)) |y| {
                                     for (((w * win.width) / width)..(((w + 1) * win.width) / width)) |x| {
-                                        win.writeCell(x, y, cell);
+                                        win.writeCell(@intCast(x), @intCast(y), cell);
                                     }
                                 }
                             }
@@ -1207,81 +1245,44 @@ const MyApp = struct {
                 }
             },
 
-            .Battle => |Battle| {
+            .Battle => |*Battle| {
                 switch (Battle.state) {
-                    .main => {
-                        const select = win.child(.{
+	                .ftrMenu => |*ftrMenu| {
+                        const text = win.child(.{
                             .x_off = 1,
-                            .y_off = win.height - 6,
-                            .width = .{ .limit = win.width - 2 },
-                            .height = .{ .limit = 5 },
-                            .border = .{ .where = .all },
+                            .y_off = 1,
+                            .width = win.width - 2,
+                            .height = 2,
                         });
-                        const states = @typeInfo(BattleState).Enum.fields;
-                        inline for (0..states.len) |i| {
-                            const style = vaxis.Style{
-                                .reverse = (i == @intFromEnum(Battle.state)),
-                            };
-                            _ = try select.printSegment(
-                                .{
-                                    .text = states[i].name,
-                                    .style = style,
-                                },
-                                .{
-                                    .row_offset = 1 + ((i / 2) * 2),
-                                    .col_offset = switch (i % 2) {
-                                        0 => 3,
-                                        else => (select.width / 2),
-                                    },
-                                },
-                            );
-                        }
+
+                        const fMsg = "Choose your fighter: ";
+                        const fWin = text.child(.{
+                            .x_off = fMsg.len,
+                            .y_off = 0,
+                            .width = @intCast(text.width - fMsg.len),
+                            .height = 1,
+                        });
+
+                        _ = text.printSegment(.{ .text = fMsg }, .{});
+                        text.setCursorShape(.underline_blink);
+                        text.showCursor(fMsg.len, 0);
+
+                        ftrMenu.input.?.draw(fWin);
+	                },
+                    .mainMenu => {
                     },
-                    .attack => |menu| {
-                        const select = win.child(.{
-                            .x_off = 1,
-                            .y_off = win.height - 9,
-                            .width = .{ .limit = win.width - 2 },
-                            .height = .{ .limit = 8 },
-                            .border = .{ .where = .all },
-                        });
-                        var i: u4 = 0;
-                        while (Battle.attacks[i]) |attack| {
-                            _ = try select.printSegment(
-                                .{ .text = attack.name, .style = .{
-                                    .reverse = (i == menu.num),
-                                } },
-                                .{
-                                    .row_offset = 1 + ((i / 2) * 2),
-                                    .col_offset = switch (i % 2) {
-                                        0 => 3,
-                                        else => (select.width / 2),
-                                    },
-                                },
-                            );
-                            i += 1;
-                            if (i >= Battle.len) {
-                                _ = try select.printSegment(
-                                    .{ .text = "Back", .style = .{
-                                        .reverse = (i == menu.num),
-                                    } },
-                                    .{
-                                        .row_offset = select.height - 1,
-                                        .col_offset = select.width - 6,
-                                    },
-                                );
-                                break;
-                            }
-                        }
+                    .moveMenu => {
+                    },
+                    .messageMenu => {
                     },
                 }
             },
             .Boxes => |Boxes| {
                 const field = win.child(.{
-                    .x_off = (win.width / 2) - (Boxes.field[0].len / 2),
-                    .y_off = (win.height / 2) - (Boxes.field.len / 2),
-                    .width = .{ .limit = Boxes.field[0].len + 2 },
-                    .height = .{ .limit = Boxes.field.len + 2 },
+                    .x_off = @intCast((win.width / 2) - (Boxes.field[0].len / 2)),
+                    .y_off = @intCast((win.height / 2) - (Boxes.field.len / 2)),
+                    .width = Boxes.field[0].len + 2,
+                    .height = Boxes.field.len + 2,
                     .border = .{ .where = .all },
                 });
                 for (Boxes.field, 0..) |row, y| {
@@ -1292,13 +1293,13 @@ const MyApp = struct {
                             .empty => " ",
                             .box => "X",
                         };
-                        field.writeCell(x, y, .{ .char = .{ .grapheme = text } });
+                        field.writeCell(@intCast(x), @intCast(y), .{ .char = .{ .grapheme = text } });
                     }
                 }
             },
             .Cards => |Cards| case: {
                 if (Cards.opts.menu) {
-                    const fields = @typeInfo(State).Enum.fields;
+                    const fields = @typeInfo(State).@"enum".fields;
                     for (0..fields.len) |i| {
                         const style = vaxis.Style{ .reverse = (i == @intFromEnum(Cards.opts.select)) };
                         var flag: bool = false;
@@ -1313,34 +1314,34 @@ const MyApp = struct {
                             },
                             // Start Game
                             2 => {
-                                _ = try win.printSegment(.{
+                                _ = win.printSegment(.{
                                     .text = "[Start]",
                                     .style = style,
-                                }, .{ .row_offset = 2 + (i * 2), .col_offset = 6 });
+                                }, .{ .row_offset = @intCast(2 + (i * 2)), .col_offset = 6 });
                                 break;
                             },
                             else => unreachable,
                         };
                         const opt = if (flag) "On" else "Off";
-                        _ = try win.printSegment(.{
+                        _ = win.printSegment(.{
                             .text = name,
                             .style = .{},
-                        }, .{ .row_offset = 1 + (i * 2), .col_offset = 1 });
-                        _ = try win.printSegment(.{
+                        }, .{ .row_offset = @intCast(1 + (i * 2)), .col_offset = 1 });
+                        _ = win.printSegment(.{
                             .text = opt,
                             .style = style,
-                        }, .{ .row_offset = 1 + (i * 2), .col_offset = 2 + name.len });
+                        }, .{ .row_offset = @intCast(1 + (i * 2)), .col_offset = 2 + name.len });
                     }
                     break :case;
                 }
 
                 if (Cards.win) {
                     const msg = "You Won!";
-                    _ = try win.printSegment(
+                    _ = win.printSegment(
                         .{
                             .text = msg,
                         },
-                        .{ .row_offset = win.height / 2, .col_offset = (win.width / 2) - (msg.len / 2) },
+                        .{ .row_offset = @intCast(win.height / 2), .col_offset = @intCast((win.width / 2) - (msg.len / 2)) },
                     );
                     break :case;
                 }
@@ -1363,14 +1364,14 @@ const MyApp = struct {
                         9 => "9",
                         else => "10+",
                     };
-                    _ = try win.printSegment(
+                    _ = win.printSegment(
                         .{
                             .text = msg,
                             .style = .{ .reverse = true },
                         },
                         .{ .row_offset = win.height - 11, .col_offset = 1 },
                     );
-                    _ = try win.printSegment(
+                    _ = win.printSegment(
                         .{
                             .text = n,
                             .style = .{ .reverse = true },
@@ -1404,19 +1405,19 @@ const MyApp = struct {
                         },
                     }
                     const offset = 11 + msgs.len;
-                    _ = try win.printSegment(
+                    _ = win.printSegment(
                         .{
                             .text = title,
                             .style = .{ .ul_style = .single },
                         },
-                        .{ .row_offset = win.height - offset, .col_offset = 1 },
+                        .{ .row_offset = @intCast(win.height - offset), .col_offset = 1 },
                     );
                     for (0..msgs.len) |i| {
-                        _ = try win.printSegment(
+                        _ = win.printSegment(
                             .{
                                 .text = msgs[i],
                             },
-                            .{ .row_offset = win.height + 1 + i - offset, .col_offset = 2 },
+                            .{ .row_offset = @intCast(win.height + 1 + i - offset), .col_offset = 2 },
                         );
                     }
                 }
@@ -1461,28 +1462,28 @@ const MyApp = struct {
 
                 const printEmpty = struct {
                     pub fn printEmpty(window: vaxis.Window, r: usize, c: usize, style: vaxis.Style) void {
-                        _ = try window.printSegment(
+                        _ = window.printSegment(
                             .{
                                 .text = "+──────+",
                                 .style = style,
                             },
-                            .{ .row_offset = r, .col_offset = c },
+                            .{ .row_offset = @intCast(r), .col_offset = @intCast(c) },
                         );
                         for (1..5) |d| {
-                            _ = try window.printSegment(
+                            _ = window.printSegment(
                                 .{
                                     .text = "│      │",
                                     .style = style,
                                 },
-                                .{ .row_offset = r + d, .col_offset = c },
+                                .{ .row_offset = @intCast(r + d), .col_offset = @intCast(c) },
                             );
                         }
-                        _ = try window.printSegment(
+                        _ = window.printSegment(
                             .{
                                 .text = "+──────+",
                                 .style = style,
                             },
-                            .{ .row_offset = r + 5, .col_offset = c },
+                            .{ .row_offset = @intCast(r + 5), .col_offset = @intCast(c) },
                         );
                     }
                 }.printEmpty;
@@ -1498,45 +1499,45 @@ const MyApp = struct {
                     ) void {
                         const value = getValue(card);
                         const suit = getSuit(symbols, card);
-                        _ = try window.printSegment(
+                        _ = window.printSegment(
                             .{
                                 .text = "╭──────╮",
                                 .style = style,
                             },
-                            .{ .row_offset = r, .col_offset = c },
+                            .{ .row_offset = @intCast(r), .col_offset = @intCast(c) },
                         );
                         // card sides
-                        _ = try window.printSegment(
+                        _ = window.printSegment(
                             .{
                                 .text = "│      │",
                                 .style = style,
                             },
-                            .{ .row_offset = r + 1, .col_offset = c },
+                            .{ .row_offset = @intCast(r + 1), .col_offset = @intCast(c) },
                         );
                         if (card.up) {
                             // card value
-                            _ = try window.printSegment(
+                            _ = window.printSegment(
                                 .{
                                     .text = value,
                                     .style = style,
                                 },
-                                .{ .row_offset = r + 1, .col_offset = c + 2 },
+                                .{ .row_offset = @intCast(r + 1), .col_offset = @intCast(c + 2) },
                             );
                             // card suit
-                            _ = try window.printSegment(
+                            _ = window.printSegment(
                                 .{
                                     .text = suit,
                                     .style = style,
                                 },
-                                .{ .row_offset = r + 1, .col_offset = c + 5 },
+                                .{ .row_offset = @intCast(r + 1), .col_offset = @intCast(c + 5) },
                             );
                         } else {
-                            _ = try window.printSegment(
+                            _ = window.printSegment(
                                 .{
                                     .text = "      ",
                                     .style = style,
                                 },
-                                .{ .row_offset = r + 1, .col_offset = c + 1 },
+                                .{ .row_offset = @intCast(r + 1), .col_offset = @intCast(c + 1) },
                             );
                         }
                     }
@@ -1553,20 +1554,20 @@ const MyApp = struct {
                     ) void {
                         printTop(window, r, c, card, style, symbols);
                         for (2..5) |d| {
-                            _ = try window.printSegment(
+                            _ = window.printSegment(
                                 .{
                                     .text = "│      │",
                                     .style = style,
                                 },
-                                .{ .row_offset = r + d, .col_offset = c },
+                                .{ .row_offset = @intCast(r + d), .col_offset = @intCast(c) },
                             );
                         }
-                        _ = try window.printSegment(
+                        _ = window.printSegment(
                             .{
                                 .text = "╰──────╯",
                                 .style = style,
                             },
-                            .{ .row_offset = r + 5, .col_offset = c },
+                            .{ .row_offset = @intCast(r + 5), .col_offset = @intCast(c) },
                         );
                     }
                 }.printCard;
