@@ -318,7 +318,7 @@ const MyApp = struct {
     pub fn detiles(self: *MyApp) void {
         switch (self.app.state) {
             .Tiles => |*Tiles| {
-                if (Tiles.input) |*input| input.*.deinit();
+                if (Tiles.input) |*input| input.deinit();
                 if (Tiles.uni) |uni| uni.deinit();
 
                 if (Tiles.height_text) |htext| self.allocator.free(htext);
