@@ -117,8 +117,6 @@ const MyApp = struct {
 	                ftrMenu: struct {
 		                uni: ?vaxis.Unicode = null,
 		                input: ?vaxis.widgets.TextInput = null,
-			            ftrName: ?[]const u8 = null,
-			            ftrFile: ?std.fs.File = null,
 	                },
 	                // main menu
                     mainMenu: struct {
@@ -313,6 +311,7 @@ const MyApp = struct {
         self.tty.deinit();
 
         if (self.app.state == .Tiles) self.detiles();
+        if (self.app.state == .Battle) self.debattle();
     }
 
     pub fn detiles(self: *MyApp) void {
@@ -342,10 +341,13 @@ const MyApp = struct {
 				    .ftrMenu => |*ftrMenu| {
 					    if (ftrMenu.input) |*input| input.deinit();
 					    if (ftrMenu.uni) |uni| uni.deinit();
-				    }
+				    },
+				    else => {},
 			    }
-			    if (Battle.fighter) {
+			    if (Battle.fighter) |fighter| {
 				    // DEALLOC FIGHTER
+				    self.allocator.free(fighter.name);
+				    self.allocator.free(fighter.moveList);
 			    }
 		    },
 		    else => unreachable,
@@ -444,6 +446,7 @@ const MyApp = struct {
                     }
                     if (key.matches(vaxis.Key.enter, .{})) {
                         if (self.app.state == .Tiles) self.detiles();
+                        if (self.app.state == .Battle) self.debattle();
                         switch (self.app.menu.state) {
                             .Child => {
                                 self.app.state = .{ .Child = .{} };
@@ -626,14 +629,63 @@ const MyApp = struct {
                             .key_press => |key| {
                                 if (key.matches(vaxis.Key.enter, .{})) {
                                     enter: {
-	                                    if (ftrMenu.ftrFile == null) {
-		                                    ftrMenu.ftrName = try ftrMenu.input.?.toOwnedSlice();
-		                                    ftrMenu.ftrFile = std.fs.cwd().openFile(ftrMenu.ftrName.?, .{}) catch {
-			                                    self.allocator.free(ftrMenu.ftrName.?);
-			                                    break :enter;
+	                                    const ftrName = try ftrMenu.input.?.toOwnedSlice();
+	                                    defer self.allocator.free(ftrName);
+	                                    const ftrFileName = try std.fmt.allocPrint(self.allocator, "fighters/{s}.ftr", .{ftrName});
+	                                    defer self.allocator.free(ftrFileName);
+
+	                                    var ftrFile = std.fs.cwd().openFile(ftrFileName, .{
+		                                    .mode = .read_only,
+	                                    }) catch break :enter;
+		                                defer ftrFile.close();
+	                                    // MAKE FIGHTER
+
+	                                    var bufReader = std.io.bufferedReader(ftrFile.reader());
+	                                    const reader = bufReader.reader();
+
+	                                    var line = std.ArrayList(u8).init(self.allocator);
+	                                    defer line.deinit();
+
+										var name: ?[]const u8 = null;
+										var health: ?u32 = null;
+										var moveList = std.ArrayList(Move).init(self.allocator);
+										defer moveList.deinit();
+	                                    while (true){
+		                                    // get identifier
+		                                    reader.streamUntilDelimiter(line.writer(), ' ', null) catch |err| switch (err) {
+			                                    error.EndOfStream => break,
+			                                    else => return err,
 			                                };
-		                                    // MAKE FIGHTER
-	                                    }
+			                                // identifier
+		                                    const id: []const u8 = try line.toOwnedSlice();
+		                                    defer self.allocator.free(id);
+		                                    // get the value
+		                                    reader.streamUntilDelimiter(line.writer(), '\n', null) catch |err| switch (err) {
+			                                    error.EndOfStream => break,
+			                                    else => return err,
+			                                };
+
+		                                    // name found
+		                                    if (std.mem.eql(u8, id, "name:")) {
+		                                 		name = try line.toOwnedSlice();
+		                                    }
+		                                    // health found
+		                                    else if (std.mem.eql(u8, id, "health:")) {
+			                                    // if its an invalid number, break gracefully
+			                                    health = std.fmt.parseInt(u32, line.items, 10) catch break :enter;
+	                                    	}
+	                                    	// move found
+	                                    	else if (std.mem.eql(u8, id, "move:")) {}
+										}
+										// EOF found
+
+										// if the file was missing something, break gracefully
+										Battle.fighter = .{
+											.name = name orelse break :enter,
+											.health = health orelse break :enter,
+											.moveList = try moveList.toOwnedSlice(),
+										};
+										Battle.state = .mainMenu;
                                     }
                                 } else try ftrMenu.input.?.update(.{ .key_press = key });
                             },
