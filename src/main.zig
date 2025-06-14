@@ -40,16 +40,17 @@ const Pos = struct {
 };
 
 const Move = struct {
-	name: []const u8,
-	speed: u32,
-	damage: ?u32,
-	block: ?u32,
+    name: []const u8,
+    speed: u32,
+    damage: ?u32,
+    block: ?u32,
 };
 
 const Fighter = struct {
-	name: []const u8,
-	health: u32,
-	moveList: []const Move,
+    name: []const u8,
+    maxhealth: u32,
+    health: u32,
+    moveList: []const Move,
 };
 
 const Suit = enum { heart, diamond, spade, club };
@@ -107,30 +108,32 @@ const MyApp = struct {
                 colors: ?[][]vaxis.Color = null,
             },
 
-			// Battle State
+            // Battle State
             Battle: struct {
-	            // The fighter
-	            fighter: ?Fighter = null,
-	            // The battle menus
+                // The fighter
+                fighter: ?Fighter = null,
+                // string used to display health
+                healthStr: ?[]const u8 = null,
+                // The battle menus
                 state: union(enum) {
-	                // fighter selection menu
-	                ftrMenu: struct {
-		                uni: ?vaxis.Unicode = null,
-		                input: ?vaxis.widgets.TextInput = null,
-	                },
-	                // main menu
+                    // fighter selection menu
+                    ftrMenu: struct {
+                        uni: ?vaxis.Unicode = null,
+                        input: ?vaxis.widgets.TextInput = null,
+                    },
+                    // main menu
                     mainMenu: struct {
-	                    selection: enum {
-		                    Attack,
-	                    } = .Attack,
+                        selection: enum {
+                            Attack,
+                        } = .Attack,
                     },
                     // move selection menu
                     moveMenu: struct {
-	                    selection: u8 = 0,
-	                },
+                        selection: u8 = 0,
+                    },
                     // brief mesage
                     messageMenu: struct {
-	                    msg: []const u8,
+                        msg: []const u8,
                     },
                 } = .{ .ftrMenu = .{} },
             },
@@ -335,23 +338,29 @@ const MyApp = struct {
     }
 
     pub fn debattle(self: *MyApp) void {
-	    switch (self.app.state) {
-		    .Battle => |*Battle| {
-			    switch (Battle.state) {
-				    .ftrMenu => |*ftrMenu| {
-					    if (ftrMenu.input) |*input| input.deinit();
-					    if (ftrMenu.uni) |uni| uni.deinit();
-				    },
-				    else => {},
-			    }
-			    if (Battle.fighter) |fighter| {
-				    // DEALLOC FIGHTER
-				    self.allocator.free(fighter.name);
-				    self.allocator.free(fighter.moveList);
-			    }
-		    },
-		    else => unreachable,
-	    }
+        switch (self.app.state) {
+            .Battle => |*Battle| {
+                switch (Battle.state) {
+                    .ftrMenu => |*ftrMenu| {
+                        if (ftrMenu.input) |*input| input.deinit();
+                        if (ftrMenu.uni) |uni| uni.deinit();
+                    },
+                    else => {},
+                }
+                if (Battle.healthStr) |str| {
+                    self.allocator.free(str);
+                }
+                if (Battle.fighter) |fighter| {
+                    // DEALLOC FIGHTER
+                    self.allocator.free(fighter.name);
+                    for (fighter.moveList) |move| {
+	                    self.allocator.free(move.name);
+                    }
+                    self.allocator.free(fighter.moveList);
+                }
+            },
+            else => unreachable,
+        }
     }
 
     pub fn run(self: *MyApp) !void {
@@ -468,16 +477,16 @@ const MyApp = struct {
                                 self.app.state = .{ .Battle = .{} };
                                 switch (self.app.state) {
                                     .Battle => |*Battle| {
-	                                    switch (Battle.state) {
-		                                    .ftrMenu => |*ftrMenu| {
-		                                        ftrMenu.uni = try vaxis.Unicode.init(self.allocator);
-		                                        ftrMenu.input = vaxis.widgets.TextInput.init(
-		                                            self.allocator,
-		                                            &ftrMenu.uni.?,
-		                                        );
-		                                    },
-		                                    else => unreachable,
-	                                    }
+                                        switch (Battle.state) {
+                                            .ftrMenu => |*ftrMenu| {
+                                                ftrMenu.uni = try vaxis.Unicode.init(self.allocator);
+                                                ftrMenu.input = vaxis.widgets.TextInput.init(
+                                                    self.allocator,
+                                                    &ftrMenu.uni.?,
+                                                );
+                                            },
+                                            else => unreachable,
+                                        }
                                     },
                                     else => unreachable,
                                 }
@@ -563,13 +572,13 @@ const MyApp = struct {
                                                 Tiles.height_text.?,
                                                 10,
                                             ) catch {
-	                                            self.allocator.free(Tiles.height_text.?);
-	                                            Tiles.height_text = null;
-	                                            break :enter;
+                                                self.allocator.free(Tiles.height_text.?);
+                                                Tiles.height_text = null;
+                                                break :enter;
                                             };
                                             if ((Tiles.height.? <= 0) or (Tiles.height.? > 10)) {
-	                                            self.allocator.free(Tiles.height_text.?);
-	                                            Tiles.height_text = null;
+                                                self.allocator.free(Tiles.height_text.?);
+                                                Tiles.height_text = null;
                                                 Tiles.height = null;
                                             }
                                         } else if (Tiles.width == null) {
@@ -579,13 +588,13 @@ const MyApp = struct {
                                                 Tiles.width_text.?,
                                                 10,
                                             ) catch {
-	                                            self.allocator.free(Tiles.width_text.?);
-	                                            Tiles.width_text = null;
-	                                            break :enter;
+                                                self.allocator.free(Tiles.width_text.?);
+                                                Tiles.width_text = null;
+                                                break :enter;
                                             };
                                             if ((Tiles.width.? <= 0) or (Tiles.width.? > 10)) {
-	                                            self.allocator.free(Tiles.width_text.?);
-	                                            Tiles.width_text = null;
+                                                self.allocator.free(Tiles.width_text.?);
+                                                Tiles.width_text = null;
                                                 Tiles.width = null;
                                             }
 
@@ -624,80 +633,128 @@ const MyApp = struct {
             },
             .Battle => |*Battle| {
                 switch (Battle.state) {
-	                .ftrMenu => |*ftrMenu| {
+                    .ftrMenu => |*ftrMenu| {
                         switch (event) {
                             .key_press => |key| {
                                 if (key.matches(vaxis.Key.enter, .{})) {
                                     enter: {
-	                                    const ftrName = try ftrMenu.input.?.toOwnedSlice();
-	                                    defer self.allocator.free(ftrName);
-	                                    const ftrFileName = try std.fmt.allocPrint(self.allocator, "fighters/{s}.ftr", .{ftrName});
-	                                    defer self.allocator.free(ftrFileName);
 
-	                                    var ftrFile = std.fs.cwd().openFile(ftrFileName, .{
-		                                    .mode = .read_only,
-	                                    }) catch break :enter;
-		                                defer ftrFile.close();
-	                                    // MAKE FIGHTER
+                                        // Read the fighter file
 
-	                                    var bufReader = std.io.bufferedReader(ftrFile.reader());
-	                                    const reader = bufReader.reader();
+                                        const ftrBuf: []u8 = mkBuf: {
+                                            // get the fighter name
+                                            const ftrName = try ftrMenu.input.?.toOwnedSlice();
+                                            defer self.allocator.free(ftrName);
+                                            // convert to the filename
+                                            const ftrFileName = try std.fmt.allocPrint(self.allocator, "fighters/{s}.ftr", .{ftrName});
+                                            defer self.allocator.free(ftrFileName);
+                                            // get the file
+                                            var ftrFile = std.fs.cwd().openFile(ftrFileName, .{
+                                                .mode = .read_only,
+                                            }) catch break :enter;
 
-	                                    var line = std.ArrayList(u8).init(self.allocator);
-	                                    defer line.deinit();
+                                            defer ftrFile.close();
+                                            // get file length
+                                            const len = try ftrFile.getEndPos();
+                                            // make the buffer; only free if error
+                                            const buf = try self.allocator.alloc(u8, len);
+                                            errdefer self.allocator.free(buf);
+                                            _ = try ftrFile.readAll(buf);
+                                            break :mkBuf buf;
+                                        };
+                                        defer self.allocator.free(ftrBuf);
 
-										var name: ?[]const u8 = null;
-										var health: ?u32 = null;
-										var moveList = std.ArrayList(Move).init(self.allocator);
-										defer moveList.deinit();
-	                                    while (true){
-		                                    // get identifier
-		                                    reader.streamUntilDelimiter(line.writer(), ' ', null) catch |err| switch (err) {
-			                                    error.EndOfStream => break,
-			                                    else => return err,
-			                                };
-			                                // identifier
-		                                    const id: []const u8 = try line.toOwnedSlice();
-		                                    defer self.allocator.free(id);
-		                                    // get the value
-		                                    reader.streamUntilDelimiter(line.writer(), '\n', null) catch |err| switch (err) {
-			                                    error.EndOfStream => break,
-			                                    else => return err,
-			                                };
+                                        var name: ?[]const u8 = null;
+                                        var health: ?u32 = null;
+                                        var moveList = std.ArrayList(Move).init(self.allocator);
+                                        defer moveList.deinit();
 
-		                                    // name found
-		                                    if (std.mem.eql(u8, id, "name:")) {
-		                                 		name = try line.toOwnedSlice();
-		                                    }
-		                                    // health found
-		                                    else if (std.mem.eql(u8, id, "health:")) {
-			                                    // if its an invalid number, break gracefully
-			                                    health = std.fmt.parseInt(u32, line.items, 10) catch break :enter;
-	                                    	}
-	                                    	// move found
-	                                    	else if (std.mem.eql(u8, id, "move:")) {}
-										}
-										// EOF found
+                                        var iter = std.mem.tokenizeAny(u8, ftrBuf, ": \n");
+                                        var token: ?[]const u8 = iter.next();
+                                        while (token) |id| : (token = iter.next()) {
+                                            // get value
+                                            const value: []const u8 = iter.next() orelse break;
+                                            if (std.mem.eql(u8, id, "name")) {
+                                                name = try self.allocator.dupe(u8, value);
+                                            } else if (std.mem.eql(u8, id, "health")) {
+                                                health = std.fmt.parseInt(u32, value, 10) catch break :enter;
+                                            } else if (std.mem.eql(u8, id, "move")) {
+                                                const moveName: []const u8 = try self.allocator.dupe(u8, value);
+	                                            var moveSpeed: ?u32 = null;
+	                                            var moveDamage: ?u32 = null;
+	                                            var moveBlock: ?u32 = null;
 
-										// if the file was missing something, break gracefully
-										Battle.fighter = .{
-											.name = name orelse break :enter,
-											.health = health orelse break :enter,
-											.moveList = try moveList.toOwnedSlice(),
-										};
-										Battle.state = .mainMenu;
+	                                            while (token) |stat| : (token = iter.next())  {
+		                                            const statVal: []const u8 = iter.next() orelse break;
+		                                            if (std.mem.eql(u8, stat, "-speed")) {
+		                                                moveSpeed = std.fmt.parseInt(u32, statVal, 10) catch break :enter;
+		                                            } else if (std.mem.eql(u8, stat, "-damage")) {
+		                                                moveDamage = std.fmt.parseInt(u32, statVal, 10) catch break :enter;
+		                                            } else if (std.mem.eql(u8, stat, "-block")) {
+		                                                moveBlock = std.fmt.parseInt(u32, statVal, 10) catch break :enter;
+		                                            } else break;
+	                                            }
+	                                            const move = Move{
+		                                            .name = moveName,
+		                                            .speed = moveSpeed orelse break,
+		                                            .damage = moveDamage,
+		                                            .block = moveBlock,
+	                                            };
+
+	                                            try moveList.append(move);
+
+                                            }
+                                        }
+                                        // EOF found
+
+                                        // if the file was missing something, break gracefully
+                                        Battle.fighter = .{
+                                            .name = name orelse break :enter,
+                                            .maxhealth = health orelse break :enter,
+                                            .health = health orelse break :enter,
+                                            .moveList = try moveList.toOwnedSlice(),
+                                        };
+
+                                        ftrMenu.input.?.deinit();
+                                        ftrMenu.uni.?.deinit();
+
+                                        Battle.state = .mainMenu;
+                                        break :enter;
                                     }
                                 } else try ftrMenu.input.?.update(.{ .key_press = key });
                             },
                             else => {},
                         }
-	                },
+                    },
                     .mainMenu => {
+                        switch (event) {
+                            .key_press => |key| {
+                                if (key.matches(vaxis.Key.enter, .{})) {
+                                    Battle.state = .{.moveMenu = .{}};
+                                }
+                            },
+                            else => {},
+                        }
                     },
-                    .moveMenu => {
-                    },
-                    .messageMenu => {
-                    },
+                    //.moveMenu => |moveMenu| {
+                        //const quad: u4 = moveMenu.selection / 4;
+                        //switch (event) {
+                            //.key_press => |key| {
+                                //if (key.matches(vaxis.Key.up, .{}) and (int > 0))
+                                    //Cards.opts.select = @enumFromInt(int - 1);
+                                //if (key.matches(vaxis.Key.down, .{}) and (int < len - 1))
+                                    //Cards.opts.select = @enumFromInt(int + 1);
+                                //if (key.matches(vaxis.Key.enter, .{})) switch (Cards.opts.select) {
+                                    //.symbols => Cards.opts.symbols = !Cards.opts.symbols,
+                                    //.pull3 => Cards.opts.pull3 = !Cards.opts.pull3,
+                                    //.start => Cards.opts.menu = false,
+                                //};
+                            //},
+                            //else => {},
+                        //}
+                    //},
+                    .moveMenu => {},
+                    .messageMenu => {},
                 }
             },
             .Boxes => |*Boxes| {
@@ -1299,7 +1356,7 @@ const MyApp = struct {
 
             .Battle => |*Battle| {
                 switch (Battle.state) {
-	                .ftrMenu => |*ftrMenu| {
+                    .ftrMenu => |*ftrMenu| {
                         const text = win.child(.{
                             .x_off = 1,
                             .y_off = 1,
@@ -1320,13 +1377,77 @@ const MyApp = struct {
                         text.showCursor(fMsg.len, 0);
 
                         ftrMenu.input.?.draw(fWin);
-	                },
-                    .mainMenu => {
                     },
-                    .moveMenu => {
+                    .mainMenu => |mainMenu| {
+	                    // HUD
+                        _ = win.printSegment(.{
+                            .text = Battle.fighter.?.name,
+                        }, .{ .row_offset = 2, .col_offset = 4 });
+
+                        if (Battle.healthStr) |str| {
+                            self.allocator.free(str);
+                        }
+                        Battle.healthStr = std.fmt.allocPrint(self.allocator, "{d} / {d}", .{
+                            Battle.fighter.?.health,
+                            Battle.fighter.?.maxhealth,
+                        }) catch "Out of Memory";
+                        _ = win.printSegment(.{
+                            .text = Battle.healthStr.?,
+                        }, .{ .row_offset = 4, .col_offset = 4 });
+
+						// Menu
+                        const menu = win.child(.{
+                            .x_off = @intCast(2),
+                            .y_off = @intCast(win.height - 8),
+                            .width = @intCast(win.width - 4),
+                            .height = @intCast(7),
+                            .border = .{ .where = .all },
+                        });
+
+                        _ = menu.printSegment(.{
+                            .text = "Moves",
+                            .style = .{ .reverse = (mainMenu.selection == .Attack) },
+                        }, .{ .row_offset = 1, .col_offset = 3 });
                     },
-                    .messageMenu => {
+                    .moveMenu => |moveMenu| {
+	                    // HUD
+                        _ = win.printSegment(.{
+                            .text = Battle.fighter.?.name,
+                        }, .{ .row_offset = 2, .col_offset = 4 });
+
+                        if (Battle.healthStr) |str| {
+                            self.allocator.free(str);
+                        }
+                        Battle.healthStr = std.fmt.allocPrint(self.allocator, "{d} / {d}", .{
+                            Battle.fighter.?.health,
+                            Battle.fighter.?.maxhealth,
+                        }) catch "Out of Memory";
+                        _ = win.printSegment(.{
+                            .text = Battle.healthStr.?,
+                        }, .{ .row_offset = 4, .col_offset = 4 });
+
+						// Menu
+                        const menu = win.child(.{
+                            .x_off = @intCast(2),
+                            .y_off = @intCast(win.height - 8),
+                            .width = @intCast(win.width - 4),
+                            .height = @intCast(7),
+                            .border = .{ .where = .all },
+                        });
+
+						const fighter: Fighter = Battle.fighter.?;
+						var shift: u8 = 0;
+						while (shift < 4) : (shift += 1) {
+							const n: u16 = (moveMenu.selection/4)*4 + shift;
+							if (n >= fighter.moveList.len) break;
+							const move = fighter.moveList[n];
+	                        _ = menu.printSegment(.{
+	                            .text = move.name,
+	                            .style = .{ .reverse = (moveMenu.selection == 0) },
+	                        }, .{ .row_offset = 1 + n, .col_offset = 3+n });
+						}
                     },
+                    .messageMenu => {},
                 }
             },
             .Boxes => |Boxes| {
