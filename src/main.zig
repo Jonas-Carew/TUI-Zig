@@ -694,14 +694,14 @@ const MyApp = struct {
 		                                                moveBlock = std.fmt.parseInt(u32, statVal, 10) catch break :enter;
 		                                            } else break;
 	                                            }
-	                                            const move = Move{
+	                                            const move: *Move = try moveList.addOne();
+
+	                                            move.* = Move{
 		                                            .name = moveName,
 		                                            .speed = moveSpeed orelse break,
 		                                            .damage = moveDamage,
 		                                            .block = moveBlock,
 	                                            };
-
-	                                            try moveList.append(move);
 
                                             }
                                         }
@@ -714,6 +714,10 @@ const MyApp = struct {
                                             .health = health orelse break :enter,
                                             .moveList = try moveList.toOwnedSlice(),
                                         };
+
+                                        for (Battle.fighter.?.moveList) |move| {
+	                                        std.debug.print("{d}", .{move.speed});
+                                        }
 
                                         ftrMenu.input.?.deinit();
                                         ftrMenu.uni.?.deinit();
